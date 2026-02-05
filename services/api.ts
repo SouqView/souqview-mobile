@@ -2,9 +2,11 @@
  * SouqView Mobile – API client for backend services (US market only)
  * Base URL: set via EXPO_PUBLIC_API_URL or default to localhost
  * All stock data is restricted to US exchanges (NASDAQ, NYSE).
+ * Uses api/client.ts for request logging (sanitized URL in console).
  */
 
-import axios from 'axios';
+import client from '../api/client';
+import { getSanitizedUrl } from '../api/client';
 
 const BASE_URL =
   process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
@@ -17,12 +19,7 @@ export const DEFAULT_US_WATCHLIST_SYMBOLS = [
   'AAPL', 'TSLA', 'NVDA', 'SPY', 'MSFT', 'GOOGL', 'AMZN', 'META', 'AMD', 'JPM',
 ];
 
-const client = axios.create({
-  baseURL: BASE_URL,
-  timeout: 15000,
-  headers: { 'Content-Type': 'application/json' },
-  withCredentials: true,
-});
+// client imported from api/client.ts (logs sanitized URLs in __DEV__)
 
 /** Legacy helpers for components that call getRequest/postRequest (US backend only). */
 export async function getRequest<T = unknown>(url: string): Promise<T> {
@@ -51,14 +48,45 @@ export function filterUSStocksOnly<T extends { symbol: string }>(items: T[]): T[
 }
 
 // ─── Twelve Data mapping (backend proxies these) ─────────────────────────────
+/** Twelve Data /profile: description, sector, industry, executives */
+export type StockProfile = {
+  description?: string;
+  sector?: string;
+  industry?: string;
+  name?: string;
+  executives?: Array<{ name?: string; title?: string }>;
+};
+
+/** Fetch profile from Twelve Data /profile endpoint (description, sector, industry, executives). */
+export async function getStockProfile(symbol: string): Promise<StockProfile | null> {
+  try {
+    const { data } = await client.get<StockProfile | { data?: StockProfile }>('/stock/profile', { params: { symbol } });
+    if (data && typeof data === 'object' && 'data' in data) return (data as { data?: StockProfile }).data ?? null;
+    return (data as StockProfile) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Profile + Quote → stock-detail (Overview tab)
 export async function getStockProfileAndQuote(symbol: string) {
   const { data } = await client.get('/stock/stock-detail', { params: { symbol } });
   return data;
 }
-// Alias for existing usage
-export async function getStockDetail(symbol: string) {
-  return getStockProfileAndQuote(symbol);
+
+/** Fetches stock-detail and merges Twelve Data /profile (description, sector, industry, executives). */
+export async function getStockDetail(symbol: string): Promise<{ data?: { profile?: StockProfile; statistics?: unknown; [k: string]: unknown } }> {
+  const [detailRes, profileRes] = await Promise.all([
+    getStockProfileAndQuote(symbol),
+    getStockProfile(symbol),
+  ]);
+  const raw = detailRes && typeof detailRes === 'object' && 'data' in detailRes
+    ? (detailRes as { data?: unknown }).data
+    : detailRes;
+  const data = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const existingProfile = (data.profile && typeof data.profile === 'object') ? data.profile as Record<string, unknown> : {};
+  const merged = { ...data, profile: { ...existingProfile, ...(profileRes || {}) } };
+  return { data: merged };
 }
 
 // News → /news/stock/:ticker (Latest News tab)
@@ -108,6 +136,30 @@ export async function getSentiment(symbol: string) {
   return data;
 }
 
+/**
+ * Overview tab insight from DeepSeek-R1 (not Llama 3).
+ * Backend should use /quote and /news (or equivalent) to generate:
+ * - What is happening? (e.g. AAPL is down 2%)
+ * - Why is it moving? (e.g. Reaction to Fed rate news)
+ * - What's next? (e.g. Testing support at $210)
+ */
+export type OverviewInsight = {
+  whatIsHappening?: string;
+  whyMoving?: string;
+  whatsNext?: string;
+};
+
+export async function getOverviewInsight(
+  symbol: string,
+  options?: { quote?: unknown; news?: unknown }
+): Promise<OverviewInsight> {
+  const body = options?.quote != null || options?.news != null
+    ? { symbol, quote: options.quote, news: options.news }
+    : { symbol };
+  const { data } = await client.post<OverviewInsight>('/ai/overview-insight', body);
+  return data ?? {};
+}
+
 // Market snapshot – US only: use NASDAQ (or NYSE). Do not use ADX/DFM.
 export async function getMarketSnapshot(exchange: string) {
   const { data } = await client.get(`/stock/market-snapshot/${exchange}`);
@@ -125,21 +177,30 @@ export type USSnapshotItem = {
 
 /** US-only watchlist/trending: fetches NASDAQ snapshot and filters to default US symbols. */
 export async function getUSMarketSnapshot(): Promise<{ marketSnapshot: USSnapshotItem[] }> {
-  const data = await getMarketSnapshot(US_EXCHANGE);
-  const snapshot: USSnapshotItem[] = data?.marketSnapshot || [];
-  const allowed = new Set(DEFAULT_US_WATCHLIST_SYMBOLS);
-  const filtered = filterUSStocksOnly(snapshot).filter((item) => allowed.has(item.symbol));
-  if (filtered.length === 0) {
-    return {
-      marketSnapshot: DEFAULT_US_WATCHLIST_SYMBOLS.slice(0, 10).map((symbol): USSnapshotItem => ({
-        symbol,
-        name: symbol,
-        lastPrice: '—',
-        percentChange: '0.00',
-      })),
-    };
+  const fallback = (): { marketSnapshot: USSnapshotItem[] } => ({
+    marketSnapshot: DEFAULT_US_WATCHLIST_SYMBOLS.slice(0, 10).map((symbol): USSnapshotItem => ({
+      symbol,
+      name: symbol,
+      lastPrice: '—',
+      percentChange: '0.00',
+    })),
+  });
+  try {
+    const sanitized = getSanitizedUrl(`/stock/market-snapshot/${US_EXCHANGE}`);
+    if (__DEV__) console.log('[SouqView Watchlist] GET', sanitized);
+    const data = await getMarketSnapshot(US_EXCHANGE);
+    const snapshot: USSnapshotItem[] = data?.marketSnapshot || [];
+    const allowed = new Set(DEFAULT_US_WATCHLIST_SYMBOLS);
+    const filtered = filterUSStocksOnly(snapshot).filter((item) => allowed.has(item.symbol));
+    if (filtered.length === 0) return fallback();
+    return { marketSnapshot: filtered };
+  } catch (e) {
+    if (__DEV__) {
+      console.warn('[SouqView Watchlist] Request failed. Ensure backend is running and EXPO_PUBLIC_API_URL is set.', e);
+      console.log('[SouqView Watchlist] Expected URL format:', getSanitizedUrl(`/stock/market-snapshot/${US_EXCHANGE}`));
+    }
+    return fallback();
   }
-  return { marketSnapshot: filtered };
 }
 
 // Community: internal app data (mock for now)

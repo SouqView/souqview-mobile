@@ -1,7 +1,8 @@
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { getUSMarketSnapshot } from '../../services/api';
 import { COLORS } from '../../constants/theme';
 
@@ -42,7 +43,10 @@ export default function WatchlistScreen() {
     return (
       <TouchableOpacity
         style={styles.card}
-        onPress={() => router.push({ pathname: '/stock/[symbol]', params: { symbol: item.symbol } })}
+        onPress={() => {
+          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          router.push({ pathname: '/stock/[symbol]', params: { symbol: item.symbol } });
+        }}
         activeOpacity={0.8}
       >
         <View style={styles.row}>
@@ -112,7 +116,7 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, paddingBottom: 24 },
   card: {
     backgroundColor: COLORS.card,
-    borderRadius: 20,
+    borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 0,

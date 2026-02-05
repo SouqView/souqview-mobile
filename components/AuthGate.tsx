@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../src/context/AuthContext';
 import { COLORS } from '../constants/theme';
 
 /**

@@ -7,8 +7,9 @@ import {
   getTechnicalsData,
   getInsiderTransactions,
   getCommunityMock,
+  getOverviewInsight,
 } from '../services/api';
-import type { CommunityPost } from '../services/api';
+import type { CommunityPost, OverviewInsight } from '../services/api';
 
 type Detail = Awaited<ReturnType<typeof getStockDetail>>['data'] | null;
 type Historical = Awaited<ReturnType<typeof getHistoricalData>> | null;
@@ -26,18 +27,21 @@ interface StockDetailState {
   technicals: Technicals;
   insiders: Insiders;
   community: CommunityPost[];
+  overviewInsight: OverviewInsight | null;
   loadingDetail: boolean;
   loadingNews: boolean;
   loadingFinancials: boolean;
   loadingTechnicals: boolean;
   loadingInsiders: boolean;
+  loadingOverviewInsight: boolean;
 }
 
 interface StockDetailContextValue extends StockDetailState {
   loadNews: () => Promise<void>;
-  loadFinancials: () => Promise<void>;
-  loadTechnicals: () => Promise<void>;
+  loadFinancials: (type?: 'annual' | 'quarterly') => Promise<void>;
+  loadTechnicals: (timeframe?: string) => Promise<void>;
   loadInsiders: () => Promise<void>;
+  loadOverviewInsight: () => Promise<void>;
 }
 
 const StockDetailContext = createContext<StockDetailContextValue | null>(null);
@@ -55,11 +59,13 @@ export function StockDetailProvider({
   const [financials, setFinancials] = useState<Financials>(null);
   const [technicals, setTechnicals] = useState<Technicals>(null);
   const [insiders, setInsiders] = useState<Insiders>(null);
+  const [overviewInsight, setOverviewInsight] = useState<OverviewInsight | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(true);
   const [loadingNews, setLoadingNews] = useState(false);
   const [loadingFinancials, setLoadingFinancials] = useState(false);
   const [loadingTechnicals, setLoadingTechnicals] = useState(false);
   const [loadingInsiders, setLoadingInsiders] = useState(false);
+  const [loadingOverviewInsight, setLoadingOverviewInsight] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +93,7 @@ export function StockDetailProvider({
     setLoadingNews(true);
     try {
       const res = await getStockNews(symbol);
-      setNews(Array.isArray((res as { data?: unknown[] })?.data) ? (res as { data: unknown[] }).data : res);
+      setNews(res ?? null);
     } catch {
       setNews(null);
     } finally {
@@ -95,10 +101,10 @@ export function StockDetailProvider({
     }
   }, [symbol]);
 
-  const loadFinancials = useCallback(async () => {
+  const loadFinancials = useCallback(async (type: 'annual' | 'quarterly' = 'annual') => {
     setLoadingFinancials(true);
     try {
-      const res = await getFinancialsData(symbol);
+      const res = await getFinancialsData(symbol, type);
       setFinancials(res ?? null);
     } catch {
       setFinancials(null);
@@ -107,10 +113,10 @@ export function StockDetailProvider({
     }
   }, [symbol]);
 
-  const loadTechnicals = useCallback(async () => {
+  const loadTechnicals = useCallback(async (timeframe: string = '1day') => {
     setLoadingTechnicals(true);
     try {
-      const res = await getTechnicalsData(symbol);
+      const res = await getTechnicalsData(symbol, timeframe);
       setTechnicals(res ?? null);
     } catch {
       setTechnicals(null);
@@ -131,6 +137,18 @@ export function StockDetailProvider({
     }
   }, [symbol]);
 
+  const loadOverviewInsight = useCallback(async () => {
+    setLoadingOverviewInsight(true);
+    try {
+      const insight = await getOverviewInsight(symbol);
+      setOverviewInsight(insight);
+    } catch {
+      setOverviewInsight(null);
+    } finally {
+      setLoadingOverviewInsight(false);
+    }
+  }, [symbol]);
+
   const community = getCommunityMock(symbol);
 
   const value: StockDetailContextValue = {
@@ -142,15 +160,18 @@ export function StockDetailProvider({
     technicals,
     insiders,
     community,
+    overviewInsight,
     loadingDetail,
     loadingNews,
     loadingFinancials,
     loadingTechnicals,
     loadingInsiders,
+    loadingOverviewInsight,
     loadNews,
     loadFinancials,
     loadTechnicals,
     loadInsiders,
+    loadOverviewInsight,
   };
 
   return (

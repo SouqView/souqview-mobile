@@ -26,13 +26,40 @@ Segmented tab bar with haptics when switching segments. Floating **Trade** butto
 - **OLED** background: `#000000`.
 - **Electric Blue** `#4E9EE5` and **Neon Mint** `#31A270` for accents (web parity).
 
+## 4-pillar architecture (MVP)
+
+- **Frontend:** React Native (Expo) + TypeScript  
+- **Backend/DB:** Supabase (Auth, Database, Realtime)  
+- **AI:** DeepSeek-R1 (reasoning) + Llama-3 (chat) via Groq/OpenRouter on backend  
+- **Market data:** Twelve Data API (via backend)
+
+Code is organized under `src/`:
+
+| Folder       | Purpose |
+|-------------|---------|
+| `src/api`   | External API client (backend proxy) |
+| `src/services` | supabase, authService, marketData, aiService |
+| `src/context`  | UserContext (Supabase Auth), MarketContext |
+| `src/components` | Reusable UI (e.g. AppleStyleCard, StockChart) |
+| `src/screens`   | Main screens (Watchlist, Invest, Chat) |
+
 ## Setup
 
 1. Install: `npm install`
-2. **Environment:** Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL` to your backend (e.g. `http://localhost:5000/api`). Optional for local dev (defaults to `http://localhost:5000/api`).
+2. **Environment:** Copy `.env.example` to `.env`. Set **Supabase** (required for Auth): `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` from [Supabase Dashboard → Project Settings → API](https://supabase.com/dashboard). Set `EXPO_PUBLIC_API_URL` to your backend (e.g. `http://localhost:5000/api`).
 3. Run: `npx expo start` then choose iOS/Android/Web or scan QR code with Expo Go.
 
-Backend must be running (e.g. `http://localhost:5000`) and CORS allowed. Stock, news, sentiment, and financials endpoints are used.
+Backend must be running (e.g. `http://localhost:5000`) and CORS allowed.
+
+**Backend APIs:** The app expects a backend that uses three services (configure keys on the backend only, never in the mobile app):
+
+| Service      | Typical use                          | Backend env var (example)   |
+|-------------|--------------------------------------|-----------------------------|
+| **Twelve Data** | Stock quotes, history, fundamentals  | `TWELVEDATA_API_KEY`        |
+| **Groq**        | Fast LLM (e.g. Faheem, summaries)    | `GROQ_API_KEY`              |
+| **DeepSeek**    | LLM (analysis, forecasts)            | `DEEPSEEK_API_KEY`          |
+
+See `.env.example` for a short reference. Stock, news, sentiment, and financials endpoints are used.
 
 - **Login:** The login screen is at `/login` and is registered in the root stack. To require login before using the app, set `REQUIRE_LOGIN = true` in `components/AuthGate.tsx`.
 - **Tests:** `npm test`

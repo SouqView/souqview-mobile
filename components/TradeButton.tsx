@@ -10,6 +10,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import ConfettiCannon from 'react-native-confetti-cannon';
@@ -80,20 +81,26 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
     }
   };
 
+  const closeModal = () => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setVisible(false);
+  };
+
   return (
     <>
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => {
-          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      <SafeAreaView style={styles.stickyBarSafe} edges={['bottom']}>
+        <TouchableOpacity
+          style={styles.stickyBar}
+          onPress={() => {
+          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setVisible(true);
           setErrorMessage(null);
         }}
         activeOpacity={0.9}
-      >
-        <Ionicons name="swap-horizontal" size={24} color="#000" />
-        <Text style={styles.fabLabel}>Trade</Text>
-      </TouchableOpacity>
+        >
+          <Text style={styles.stickyBarLabel}>Trade</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
 
       <Modal visible={visible} transparent animationType="slide">
         <KeyboardAvoidingView
@@ -109,11 +116,17 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
           />
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Demo Trade — {symbol}</Text>
-              <TouchableOpacity onPress={() => setVisible(false)} hitSlop={12}>
+              <Text style={styles.modalTitle}>Buy {symbol}</Text>
+              <TouchableOpacity
+                onPress={closeModal}
+                hitSlop={12}
+                onPressIn={() => Platform.OS !== 'web' && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+              >
                 <Ionicons name="close" size={28} color={COLORS.text} />
               </TouchableOpacity>
             </View>
+
+            <Text style={styles.availableCash}>Available Cash: $100,000</Text>
             <Text style={styles.priceLine}>
               Price: <Text style={styles.priceValue}>{price ? price.toFixed(2) : '—'} USD</Text>
             </Text>
@@ -121,13 +134,19 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
             <View style={styles.toggleRow}>
               <TouchableOpacity
                 style={[styles.toggleBtn, side === 'buy' && styles.toggleBtnActive]}
-                onPress={() => setSide('buy')}
+                onPress={() => {
+                  if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setSide('buy');
+                }}
               >
                 <Text style={[styles.toggleText, side === 'buy' && styles.toggleTextActive]}>Buy</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.toggleBtn, side === 'sell' && styles.toggleBtnActiveSell]}
-                onPress={() => setSide('sell')}
+                onPress={() => {
+                  if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setSide('sell');
+                }}
               >
                 <Text style={[styles.toggleText, side === 'sell' && styles.toggleTextActiveSell]}>Sell</Text>
               </TouchableOpacity>
@@ -137,12 +156,12 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
               <Text style={styles.holding}>You have {position.quantity} shares</Text>
             )}
 
-            <Text style={styles.label}>Quantity</Text>
+            <Text style={styles.label}>Share quantity or USD amount</Text>
             <TextInput
               style={styles.input}
               value={quantity}
               onChangeText={(t) => { setQuantity(t); setErrorMessage(null); }}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
               placeholder="0"
               placeholderTextColor={COLORS.textTertiary}
             />
@@ -162,12 +181,13 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
               ]}
               onPress={handleExecute}
               disabled={!(side === 'buy' ? canBuy : canSell) || submitting}
+              onPressIn={() => (side === 'buy' ? canBuy : canSell) && Platform.OS !== 'web' && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
             >
               {submitting ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={[(side === 'buy' ? canBuy : canSell) ? styles.submitTextActive : styles.submitTextDisabled]}>
-                  {side === 'buy' ? 'Buy' : 'Sell'} {symbol}
+                  Confirm {side === 'buy' ? 'Buy' : 'Sell'}
                 </Text>
               )}
             </TouchableOpacity>
@@ -180,25 +200,19 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
 }
 
 const styles = StyleSheet.create({
-  fab: {
+  stickyBarSafe: {
     position: 'absolute',
-    bottom: 24,
-    right: 20,
-    flexDirection: 'row',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#007AFF',
+  },
+  stickyBar: {
+    height: 50,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.electricBlue,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 28,
-    shadowColor: COLORS.electricBlue,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
-    gap: 6,
   },
-  fabLabel: { fontSize: 16, fontWeight: '700', color: '#000' },
+  stickyBarLabel: { fontSize: 17, fontWeight: '700', color: '#FFFFFF' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.85)',
@@ -213,8 +227,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: COLORS.text },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  modalTitle: { fontSize: 22, fontWeight: '700', color: COLORS.text },
+  availableCash: { fontSize: 15, color: '#8E8E93', marginBottom: 8 },
   priceLine: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 16 },
   priceValue: { color: COLORS.neonMint, fontWeight: '700' },
   toggleRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },

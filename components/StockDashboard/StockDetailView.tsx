@@ -1,8 +1,10 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
-import { COLORS } from '../../constants/theme';
+import { COLORS, TYPO } from '../../constants/theme';
 import { StockDetailProvider, useStockDetail } from '../../contexts/StockDetailContext';
+import { useExpertise } from '../../contexts/ExpertiseContext';
+import { toFaheemMode } from '../../src/services/aiService';
 import { OverviewTab } from './OverviewTab';
 import type { OverviewTabProps } from './OverviewTab';
 import { NewsTab } from './NewsTab';
@@ -26,42 +28,44 @@ function PriceHeader() {
   const nameStr = typeof profile?.name === 'string' ? profile.name : profile?.name?.en;
   const sectorStr = typeof profile?.sector === 'string' ? profile.sector : profile?.sector?.en;
 
+  const changeStr = price ? `${isPositive ? '+' : ''}${change?.toFixed(2) ?? '0'}%` : '—';
   return (
     <View style={styles.header}>
-      <View style={styles.headerTop}>
-        <View>
-          <Text style={styles.symbol}>{symbol}</Text>
-          {(nameStr || sectorStr) && (
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {nameStr ?? ''}{sectorStr ? ` • ${sectorStr}` : ''}
+      <Text style={styles.largeTitle}>{nameStr || symbol}</Text>
+      {(nameStr && sectorStr) && (
+        <Text style={styles.subtitle} numberOfLines={1}>{sectorStr}</Text>
+      )}
+      <View style={styles.priceRow}>
+        {loadingDetail ? (
+          <Text style={styles.price}>—</Text>
+        ) : (
+          <>
+            <Text style={styles.price} numberOfLines={1}>
+              {price ? price.toFixed(2) : '—'}
             </Text>
-          )}
-        </View>
-        <View style={styles.priceCol}>
-          {loadingDetail ? (
-            <Text style={styles.price}>—</Text>
-          ) : (
-            <>
-              <Text style={styles.price}>{price ? price.toFixed(2) : '—'} USD</Text>
-              <Text style={[styles.change, isPositive ? styles.positive : styles.negative]}>
-                {price ? `${isPositive ? '+' : ''}${change?.toFixed(2) ?? '0'}%` : ''}
+            <View style={[styles.pill, isPositive ? styles.pillGreen : styles.pillRed]}>
+              <Text style={[styles.pillText, isPositive ? styles.positive : styles.negative]}>
+                {changeStr}
               </Text>
-            </>
-          )}
-        </View>
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
 }
 
 function OverviewScreen() {
+  const { expertiseLevel } = useExpertise();
   const { symbol, detail, historical, loadingDetail } = useStockDetail();
+  const mode = toFaheemMode(expertiseLevel);
   return (
     <OverviewTab
       symbol={symbol}
       detail={detail as OverviewTabProps['detail']}
       historical={historical as OverviewTabProps['historical']}
       loading={loadingDetail}
+      faheemMode={mode}
     />
   );
 }
@@ -69,8 +73,7 @@ function OverviewScreen() {
 function NewsScreen() {
   const { symbol, news, loadingNews, loadNews } = useStockDetail();
   useEffect(() => { loadNews(); }, [loadNews]);
-  const list = Array.isArray(news) ? news : (news as { data?: unknown[] })?.data ?? null;
-  return <NewsTab symbol={symbol} news={list} loading={loadingNews} />;
+  return <NewsTab symbol={symbol} news={news} loading={loadingNews} />;
 }
 
 function FinancialsScreen() {
@@ -80,14 +83,21 @@ function FinancialsScreen() {
 }
 
 function TechnicalsScreen() {
-  const { symbol, technicals, loadingTechnicals, loadTechnicals } = useStockDetail();
+  const { symbol, technicals, loadingTechnicals, loadTechnicals, historical } = useStockDetail();
   useEffect(() => { loadTechnicals(); }, [loadTechnicals]);
-  return <TechnicalsTab symbol={symbol} technicals={technicals} loading={loadingTechnicals} />;
+  return <TechnicalsTab symbol={symbol} technicals={technicals} loading={loadingTechnicals} historical={historical} />;
 }
 
 function ForecastAIScreen() {
-  const { symbol } = useStockDetail();
-  return <ForecastAITab symbol={symbol} />;
+  const { symbol, historical, detail } = useStockDetail();
+  const currentPrice = (detail?.statistics as { currentPrice?: number | null } | undefined)?.currentPrice ?? null;
+  return (
+    <ForecastAITab
+      symbol={symbol}
+      historical={historical}
+      currentPrice={currentPrice}
+    />
+  );
 }
 
 function InsidersScreen() {
@@ -97,8 +107,8 @@ function InsidersScreen() {
 }
 
 function CommunityScreen() {
-  const { symbol, community } = useStockDetail();
-  return <CommunityTab symbol={symbol} posts={community} />;
+  const { symbol } = useStockDetail();
+  return <CommunityTab symbol={symbol} />;
 }
 
 export interface StockDetailViewProps {
@@ -123,7 +133,7 @@ export function StockDetailView({ symbol }: StockDetailViewProps) {
             tabBarScrollEnabled: true,
             tabBarStyle: { backgroundColor: COLORS.background },
             tabBarIndicatorStyle: { backgroundColor: COLORS.electricBlue },
-            tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
+            tabBarLabelStyle: { fontSize: 12, fontWeight: '600', color: COLORS.textSecondary },
             tabBarItemStyle: { width: width > 400 ? undefined : 72 },
           }}
         >
@@ -144,19 +154,27 @@ export function StockDetailView({ symbol }: StockDetailViewProps) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   header: {
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.background,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 20,
   },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  symbol: { fontSize: 28, fontWeight: '700', color: COLORS.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
-  priceCol: { alignItems: 'flex-end' },
-  price: { fontSize: 24, fontWeight: '700', color: COLORS.text },
-  change: { fontSize: 14, marginTop: 2 },
+  largeTitle: {
+    ...TYPO.header,
+    color: COLORS.text,
+    letterSpacing: -0.5,
+  },
+  subtitle: { fontSize: 13, color: '#8E8E93', marginTop: 4 },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
+  price: {
+    ...TYPO.price,
+    color: COLORS.text,
+    fontVariant: ['tabular-nums'],
+  },
+  pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  pillGreen: { backgroundColor: 'rgba(52, 199, 89, 0.2)' },
+  pillRed: { backgroundColor: 'rgba(255, 59, 48, 0.2)' },
+  pillText: { fontSize: 15, fontWeight: '600' },
   positive: { color: COLORS.positive },
   negative: { color: COLORS.negative },
 });

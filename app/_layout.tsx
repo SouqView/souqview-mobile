@@ -1,27 +1,41 @@
+import 'react-native-url-polyfill/auto';
+import { useEffect } from 'react';
+import { Linking } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { AuthProvider } from '../contexts/AuthContext';
+import { AuthProvider } from '../src/context/AuthContext';
+import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
+import { ExpertiseProvider } from '../contexts/ExpertiseContext';
 import { PortfolioProvider } from '../contexts/PortfolioContext';
 import { AuthGate } from '../components/AuthGate';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { COLORS } from '../constants/theme';
+import { handleOAuthRedirect } from '../src/services/supabase';
 
-export default function RootLayout() {
+function DeepLinkHandler() {
+  useEffect(() => {
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      handleOAuthRedirect(url);
+    });
+    return () => sub.remove();
+  }, []);
+  return null;
+}
+
+function StackWithTheme() {
+  const { colors, isDark } = useTheme();
   return (
-    <ErrorBoundary>
-      <AuthProvider>
-        <PortfolioProvider>
-          <AuthGate>
-            <StatusBar style="dark" backgroundColor={COLORS.background} />
-            <Stack
-              screenOptions={{
-                headerStyle: { backgroundColor: COLORS.background }, headerTitleStyle: { color: COLORS.text },
-                headerTintColor: COLORS.electricBlue,
-                headerShadowVisible: false,
-                contentStyle: { backgroundColor: COLORS.background },
-                animation: 'slide_from_right',
-              }}
-            >
+    <>
+      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={colors.background} />
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: colors.background },
+          headerTitleStyle: { color: colors.text },
+          headerTintColor: colors.electricBlue,
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: colors.background },
+          animation: 'slide_from_right',
+        }}
+      >
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
                 name="login"
@@ -29,15 +43,34 @@ export default function RootLayout() {
               />
               <Stack.Screen
                 name="stock/[symbol]"
-                options={{
-                  title: '',
+                options={({ route }: { route: { params?: { symbol?: string } } }) => ({
+                  title: route.params?.symbol ?? 'Stock',
                   headerBackTitle: 'Watchlist',
-                  headerTintColor: COLORS.electricBlue,
-                }}
+                  headerTintColor: colors.electricBlue,
+                  headerStyle: { backgroundColor: colors.background },
+                  headerTitleStyle: { fontSize: 17, fontWeight: '600', color: colors.text },
+                  headerShadowVisible: false,
+                })}
               />
             </Stack>
+    </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <ErrorBoundary>
+      <AuthProvider>
+        <DeepLinkHandler />
+        <ThemeProvider>
+        <ExpertiseProvider>
+        <PortfolioProvider>
+          <AuthGate>
+            <StackWithTheme />
           </AuthGate>
         </PortfolioProvider>
+        </ExpertiseProvider>
+        </ThemeProvider>
       </AuthProvider>
     </ErrorBoundary>
   );
