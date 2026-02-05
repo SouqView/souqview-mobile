@@ -1,0 +1,556 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  TouchableOpacity,
+  ScrollView,
+} from 'react-native';
+import { WebView } from 'react-native-webview';
+import { getRequest, postRequest } from '../../services/api';
+
+interface TechnicalAnalysisProps {
+  symbol?: string;
+}
+
+interface TechnicalIndicator {
+  name: string;
+  value: string;
+  color: string;
+}
+
+export default function TechnicalAnalysis({ symbol = 'AAPL' }: TechnicalAnalysisProps) {
+  const [activeView, setActiveView] = useState<'heatmap' | 'table'>('heatmap');
+  const [selectedTimeframe, setSelectedTimeframe] = useState('5min');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [technicalIndicators, setTechnicalIndicators] = useState<TechnicalIndicator[]>([]);
+  const [faheemMessage, setFaheemMessage] = useState({
+    en: 'Analyzing market data. Insights will be ready soon...',
+    ar: 'جارٍ تحليل بيانات السوق. ستكون الرؤى جاهزة قريبًا...',
+  });
+
+  // TODO: Get from context/state instead of hardcoding
+  const selectedStockSymbol = symbol;
+  const isRTL = false; // TODO: Get from i18n context
+
+  const timeframeOptions = [
+    { label: '5 min', value: '5min' },
+    { label: '15 min', value: '15min' },
+    { label: '30 min', value: '30min' },
+    { label: '45 min', value: '45min' },
+    { label: '1 H', value: '1h' },
+    { label: '4 H', value: '4h' },
+    { label: '1 D', value: '1day' },
+    { label: '1 W', value: '1week' },
+  ];
+
+  useEffect(() => {
+    getTechnicalsData();
+    getFaheemInsights();
+  }, [selectedTimeframe, selectedStockSymbol]);
+
+  const getTechnicalsData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await getRequest(
+        `/api/stock/technicals?symbol=${selectedStockSymbol}&timeframe=${selectedTimeframe}`
+      );
+
+      if (response?.data) {
+        setTechnicalIndicators(response.data);
+      } else {
+        setError('No technical data available');
+      }
+    } catch (err: any) {
+      console.warn('Error getting technicals data:', err);
+      if (err?.status === 429) {
+        setError('rate_limit');
+      } else {
+        setError('Failed to load technical data');
+      }
+    } finally {
+      setTimeout(() => {
+        setLoading(false);
+      }, 1000);
+    }
+  };
+
+  const getFaheemInsights = async () => {
+    setFaheemMessage({
+      en: 'Analyzing market data. Insights will be ready soon...',
+      ar: 'جارٍ تحليل بيانات السوق. ستكون الرؤى جاهزة قريبًا...',
+    });
+    try {
+      const resp = await postRequest('/api/faheem/analyze', {
+        category: 'company_technicals',
+        ticker: selectedStockSymbol,
+        tier: 'pro',
+      });
+      if (resp?.data) {
+        setFaheemMessage(resp.data);
+      }
+    } catch (error) {
+      console.warn('Error getting Faheem insights:', error);
+    }
+  };
+
+  // Sample indicators for table view (if API doesn't return them)
+  const tableIndicators = [
+    { name: 'RSI (14)', value: '62.35' },
+    { name: 'MA (50)', value: '48,320.25' },
+    { name: 'MA (200)', value: '45,210.50' },
+    { name: 'MACD', value: '1,250.75' },
+    { name: 'Bollinger Bands', value: '49,100 - 51,200' },
+    { name: 'Stochastic', value: '78.92' },
+    { name: 'ADX', value: '32.15' },
+    { name: 'Ichimoku', value: '48,500 - 49,800' },
+  ];
+
+  const renderHeatMap = () => (
+    <View>
+      {/* Timeframe Selector */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.timeframeContainer}
+        contentContainerStyle={styles.timeframeContent}
+      >
+        {timeframeOptions.map((timeframe) => (
+          <TouchableOpacity
+            key={timeframe.value}
+            onPress={() => setSelectedTimeframe(timeframe.value)}
+            style={[
+              styles.timeframeButton,
+              selectedTimeframe === timeframe.value && styles.timeframeButtonActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.timeframeText,
+                selectedTimeframe === timeframe.value && styles.timeframeTextActive,
+              ]}
+            >
+              {timeframe.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Faheem AI Banner */}
+      <View style={styles.faheemBanner}>
+        <View style={styles.faheemHeader}>
+          <Text style={styles.faheemTitle}>Technical Analysis</Text>
+          <View style={styles.timeframeBadge}>
+            <Text style={styles.timeframeBadgeText}>
+              {timeframeOptions.find((t) => t.value === selectedTimeframe)?.label}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.faheemMessage}>{faheemMessage.en}</Text>
+        <Text style={styles.faheemDisclaimer}>
+          Disclaimer: Responses are AI-generated by Faheem and may contain inaccuracies. Not financial advice.
+        </Text>
+      </View>
+
+      {/* Technical Indicators Heatmap Grid */}
+      {loading ? (
+        <View style={styles.loadingGrid}>
+          {[...Array(20)].map((_, index) => (
+            <View key={index} style={styles.indicatorCardSkeleton}>
+              <View style={styles.skeletonLine} />
+              <View style={[styles.skeletonLine, styles.skeletonLineWide]} />
+            </View>
+          ))}
+        </View>
+      ) : error ? (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={getTechnicalsData}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.indicatorsGrid}>
+          {technicalIndicators.map((indicator, index) => (
+            <View
+              key={index}
+              style={[
+                styles.indicatorCard,
+                { backgroundColor: indicator.color || '#334155' },
+              ]}
+            >
+              <Text style={styles.indicatorName} numberOfLines={1}>
+                {indicator.name}
+              </Text>
+              <Text style={styles.indicatorValue} numberOfLines={1}>
+                {indicator.value}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  const renderTable = () => (
+    <View>
+      {/* View Toggle Button */}
+      <TouchableOpacity
+        style={styles.viewToggleButton}
+        onPress={() => setActiveView('heatmap')}
+      >
+        <Text style={styles.viewToggleText}>Heatmap</Text>
+      </TouchableOpacity>
+
+      {/* Table Header Banner */}
+      <View style={styles.tableBanner}>
+        <Text style={styles.tableBannerTitle}>Technical Indicators</Text>
+        <Text style={styles.tableBannerText}>
+          Comprehensive technical analysis indicators and their current values
+        </Text>
+      </View>
+
+      {/* Indicators Table */}
+      <View style={styles.tableContainer}>
+        {/* Table Header */}
+        <View style={styles.tableHeader}>
+          <View style={styles.tableHeaderCell}>
+            <Text style={styles.tableHeaderText}>Indicator</Text>
+          </View>
+          <View style={[styles.tableHeaderCell, styles.tableHeaderCellRight]}>
+            <Text style={styles.tableHeaderText}>Value</Text>
+          </View>
+        </View>
+
+        {/* Table Rows */}
+        {tableIndicators.map((indicator, index) => (
+          <View
+            key={index}
+            style={[
+              styles.tableRow,
+              index % 2 === 0 && styles.tableRowEven,
+            ]}
+          >
+            <View style={styles.tableCell}>
+              <Text style={styles.tableCellText}>{indicator.name}</Text>
+            </View>
+            <View style={[styles.tableCell, styles.tableCellRight]}>
+              <Text style={styles.tableCellValue}>{indicator.value}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={styles.container}>
+      {/* View Toggle */}
+      <View style={styles.viewToggleContainer}>
+        <TouchableOpacity
+          style={[
+            styles.viewToggle,
+            activeView === 'heatmap' && styles.viewToggleActive,
+          ]}
+          onPress={() => setActiveView('heatmap')}
+        >
+          <Text
+            style={[
+              styles.viewToggleText,
+              activeView === 'heatmap' && styles.viewToggleTextActive,
+            ]}
+          >
+            Heatmap
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.viewToggle,
+            activeView === 'table' && styles.viewToggleActive,
+          ]}
+          onPress={() => setActiveView('table')}
+        >
+          <Text
+            style={[
+              styles.viewToggleText,
+              activeView === 'table' && styles.viewToggleTextActive,
+            ]}
+          >
+            Table
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Content */}
+      {activeView === 'heatmap' ? renderHeatMap() : renderTable()}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 16,
+    paddingTop: 8,
+  },
+  viewToggleContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    padding: 4,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  viewToggle: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  viewToggleActive: {
+    backgroundColor: '#38bdf8',
+  },
+  viewToggleText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#94a3b8',
+  },
+  viewToggleTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  timeframeContainer: {
+    marginBottom: 12,
+  },
+  timeframeContent: {
+    gap: 8,
+  },
+  timeframeButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  timeframeButtonActive: {
+    backgroundColor: '#38bdf8',
+    borderColor: '#38bdf8',
+  },
+  timeframeText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#94a3b8',
+  },
+  timeframeTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  faheemBanner: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  faheemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  faheemTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  timeframeBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  timeframeBadgeText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#fff',
+  },
+  faheemMessage: {
+    fontSize: 14,
+    color: '#cbd5e1',
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  faheemDisclaimer: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  loadingGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  indicatorCardSkeleton: {
+    width: '18%',
+    aspectRatio: 1,
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  skeletonLine: {
+    height: 8,
+    backgroundColor: '#334155',
+    borderRadius: 4,
+    width: '60%',
+  },
+  skeletonLineWide: {
+    width: '80%',
+  },
+  errorContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#f87171',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#38bdf8',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  indicatorsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  indicatorCard: {
+    width: '18%',
+    aspectRatio: 1,
+    borderRadius: 8,
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 80,
+  },
+  indicatorName: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  indicatorValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  viewToggleButton: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#38bdf8',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: 16,
+  },
+  viewToggleButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  tableBanner: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  tableBannerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  tableBannerText: {
+    fontSize: 13,
+    color: '#cbd5e1',
+    lineHeight: 18,
+  },
+  tableContainer: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#0f172a',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  tableHeaderCell: {
+    flex: 1,
+    padding: 12,
+    borderRightWidth: 1,
+    borderRightColor: '#334155',
+  },
+  tableHeaderCellRight: {
+    borderRightWidth: 0,
+  },
+  tableHeaderText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  tableRowEven: {
+    backgroundColor: '#1e293b',
+  },
+  tableCell: {
+    flex: 1,
+    padding: 12,
+    borderRightWidth: 1,
+    borderRightColor: '#334155',
+    justifyContent: 'center',
+  },
+  tableCellRight: {
+    borderRightWidth: 0,
+  },
+  tableCellText: {
+    fontSize: 13,
+    color: '#cbd5e1',
+    textAlign: 'center',
+  },
+  tableCellValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+    textAlign: 'center',
+  },
+});
