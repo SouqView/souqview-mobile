@@ -57,10 +57,21 @@ type Action =
   | { type: 'SELL'; payload: { symbol: string; quantity: number; price: number } }
   | { type: 'RESET_DEMO' };
 
+function normalizeState(raw: Partial<PortfolioState>): PortfolioState {
+  return {
+    cashBalance: typeof raw.cashBalance === 'number' ? raw.cashBalance : initialState.cashBalance,
+    holdings: Array.isArray(raw.holdings) ? raw.holdings : [],
+    history: Array.isArray(raw.history) ? raw.history : [],
+    xp: typeof raw.xp === 'number' ? raw.xp : 0,
+    level: typeof raw.level === 'number' ? raw.level : 1,
+  };
+}
+
 function reducer(state: PortfolioState, action: Action): PortfolioState {
+  const safeHoldings = state.holdings ?? [];
   switch (action.type) {
     case 'RESTORE':
-      return action.payload;
+      return normalizeState(action.payload);
     case 'RESET_DEMO':
       return initialState;
     case 'BUY': {
@@ -68,17 +79,17 @@ function reducer(state: PortfolioState, action: Action): PortfolioState {
       const total = price * quantity;
       if (state.cashBalance < total) return state;
       const newBalance = state.cashBalance - total;
-      const existing = state.holdings.find((h) => h.symbol === symbol);
+      const existing = safeHoldings.find((h) => h.symbol === symbol);
       const date = new Date().toISOString();
       let newHoldings: Holding[];
       if (existing) {
         const newQty = existing.quantity + quantity;
         const newAvg = (existing.avgPrice * existing.quantity + total) / newQty;
-        newHoldings = state.holdings.map((h) =>
+        newHoldings = safeHoldings.map((h) =>
           h.symbol === symbol ? { ...h, quantity: newQty, avgPrice: newAvg } : h
         );
       } else {
-        newHoldings = [...state.holdings, { symbol, quantity, avgPrice: price }];
+        newHoldings = [...safeHoldings, { symbol, quantity, avgPrice: price }];
       }
       const newXp = state.xp + XP_PER_TRADE;
       return {
@@ -87,7 +98,7 @@ function reducer(state: PortfolioState, action: Action): PortfolioState {
         holdings: newHoldings,
         history: [
           { type: 'BUY', symbol, price, quantity, date },
-          ...state.history,
+          ...(state.history ?? []),
         ],
         xp: newXp,
         level: xpToLevel(newXp),
@@ -95,7 +106,7 @@ function reducer(state: PortfolioState, action: Action): PortfolioState {
     }
     case 'SELL': {
       const { symbol, quantity, price } = action.payload;
-      const pos = state.holdings.find((h) => h.symbol === symbol);
+      const pos = safeHoldings.find((h) => h.symbol === symbol);
       if (!pos || pos.quantity < quantity) return state;
       const total = price * quantity;
       const newBalance = state.cashBalance + total;
@@ -103,8 +114,8 @@ function reducer(state: PortfolioState, action: Action): PortfolioState {
       const date = new Date().toISOString();
       const newHoldings =
         newQty <= 0
-          ? state.holdings.filter((h) => h.symbol !== symbol)
-          : state.holdings.map((h) =>
+          ? safeHoldings.filter((h) => h.symbol !== symbol)
+          : safeHoldings.map((h) =>
               h.symbol === symbol ? { ...h, quantity: newQty } : h
             );
       const newXp = state.xp + XP_PER_TRADE;
@@ -114,7 +125,7 @@ function reducer(state: PortfolioState, action: Action): PortfolioState {
         holdings: newHoldings,
         history: [
           { type: 'SELL', symbol, price, quantity, date },
-          ...state.history,
+          ...(state.history ?? []),
         ],
         xp: newXp,
         level: xpToLevel(newXp),
@@ -172,7 +183,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
 
   const sellStock = useCallback(
     (symbol: string, currentPrice: number, quantity: number): SellResult => {
-      const pos = state.holdings.find((h) => h.symbol === symbol);
+      const pos = (state.holdings ?? []).find((h) => h.symbol === symbol);
       if (!pos) return { error: 'No position in this stock' };
       if (pos.quantity < quantity) return { error: 'Insufficient shares' };
       if (quantity <= 0 || currentPrice <= 0) return { error: 'Invalid quantity or price' };
@@ -186,13 +197,15 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'RESET_DEMO' });
   }, []);
 
+  const holdings = state.holdings ?? [];
   const getPosition = useCallback(
-    (symbol: string) => state.holdings.find((h) => h.symbol === symbol),
-    [state.holdings]
+    (symbol: string) => holdings.find((h) => h.symbol === symbol),
+    [holdings]
   );
 
   const value: PortfolioContextValue = {
     ...state,
+    holdings,
     buyStock,
     sellStock,
     resetDemo,

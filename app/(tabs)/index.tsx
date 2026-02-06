@@ -1,86 +1,97 @@
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useState, useEffect } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useIsFocused } from '@react-navigation/native';
+import Animated, { Layout } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
-import { getUSMarketSnapshot } from '../../services/api';
+import { getUSMarketSnapshot, type USSnapshotItem } from '../../services/api';
 import { COLORS } from '../../constants/theme';
+import StockRow from '../../components/StockRow';
 
-type SnapshotItem = {
-  symbol: string;
-  name: string;
-  image?: string;
-  lastPrice: string;
-  percentChange: string;
-  summary?: { en: string; ar: string };
-};
+const WATCHLIST_POLL_INTERVAL_MS = 10000;
 
 export default function WatchlistScreen() {
-  const router = useRouter();
-  const [items, setItems] = useState<SnapshotItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const isFocused = useIsFocused();
+  const [items, setItems] = useState<USSnapshotItem[]>([]);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasDataRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadSnapshot = useCallback((silent = false) => {
+    if (!silent) setError(null);
+    if (!silent && !hasDataRef.current) setIsInitialLoading(true);
+
     getUSMarketSnapshot()
-      .then((res: { marketSnapshot?: SnapshotItem[] }) => {
-        if (!cancelled && res?.marketSnapshot) setItems(res.marketSnapshot);
+      .then((res) => {
+        const list = res.marketSnapshot ?? [];
+        if (list.length > 0) hasDataRef.current = true;
+        setItems(list);
       })
       .catch((e) => {
-        if (!cancelled) setError(e?.message || 'Failed to load');
+        const msg = e?.response?.status === 429
+          ? 'Too many requests. Try again in a moment.'
+          : e?.response?.status >= 500
+            ? 'Server error. Try again.'
+            : e?.message || 'Failed to load';
+        setError(msg);
         setItems([]);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        setIsInitialLoading(false);
       });
-    return () => { cancelled = true; };
   }, []);
 
-  const renderItem = ({ item }: { item: SnapshotItem }) => {
-    const change = parseFloat(item.percentChange);
-    const isPositive = change >= 0;
-    return (
-      <TouchableOpacity
-        style={styles.card}
-        onPress={() => {
-          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          router.push({ pathname: '/stock/[symbol]', params: { symbol: item.symbol } });
-        }}
-        activeOpacity={0.8}
-      >
-        <View style={styles.row}>
-          <View style={styles.symbolRow}>
-            <Text style={styles.symbol}>{item.symbol}</Text>
-            <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
-          </View>
-          <View style={styles.priceCol}>
-            <Text style={styles.price}>{item.lastPrice}</Text>
-            <Text style={[styles.change, isPositive ? styles.positive : styles.negative]}>
-              {isPositive ? '+' : ''}{item.percentChange}%
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={COLORS.textTertiary} />
+  useEffect(() => {
+    loadSnapshot(false);
+  }, [loadSnapshot]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = setInterval(() => loadSnapshot(true), WATCHLIST_POLL_INTERVAL_MS);
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [isFocused, loadSnapshot]);
+
+  const renderItem = useCallback(({ item }: { item: USSnapshotItem }) => (
+    <Animated.View layout={Layout.springify()}>
+      <StockRow item={item} />
+    </Animated.View>
+  ), []);
+
+  const skeletonRow = () => (
+    <View style={[styles.card, styles.skeletonCard]}>
+      <View style={styles.row}>
+        <View style={styles.symbolRow}>
+          <View style={[styles.skeletonLine, styles.skeletonSymbol]} />
+          <View style={[styles.skeletonLine, styles.skeletonName]} />
         </View>
-      </TouchableOpacity>
-    );
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.electricBlue} />
-        <Text style={styles.sub}>Loading watchlist…</Text>
+        <View style={styles.priceCol}>
+          <View style={[styles.skeletonLine, styles.skeletonPrice]} />
+          <View style={[styles.skeletonLine, styles.skeletonChip]} />
+        </View>
       </View>
-    );
-  }
+    </View>
+  );
 
-  if (error) {
+  if (error && !isInitialLoading) {
     return (
       <View style={styles.centered}>
         <Ionicons name="cloud-offline" size={48} color={COLORS.textTertiary} />
-        <Text style={styles.sub}>{error}</Text>
-        <Text style={styles.hint}>Ensure backend is running and EXPO_PUBLIC_API_URL is set.</Text>
+        <Text style={styles.sub}>Market Data Unavailable</Text>
+        <Text style={styles.hint}>{error}</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={loadSnapshot} activeOpacity={0.8}>
+          <Text style={styles.retryText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -89,15 +100,23 @@ export default function WatchlistScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Watchlist</Text>
       <Text style={styles.subtitle}>Tap a stock for the full dashboard</Text>
-      <FlatList
-        data={items}
-        keyExtractor={(item) => item.symbol}
-        renderItem={renderItem}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={
-          <Text style={styles.empty}>No symbols in watchlist.</Text>
-        }
-      />
+      {isInitialLoading ? (
+        <View style={styles.list}>
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <View key={i}>{skeletonRow()}</View>
+          ))}
+        </View>
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(item) => item.symbol}
+          renderItem={renderItem}
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={
+            <Text style={styles.empty}>No symbols in watchlist.</Text>
+          }
+        />
+      )}
     </View>
   );
 }
@@ -126,16 +145,27 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  skeletonCard: { opacity: 0.7 },
+  skeletonLine: { backgroundColor: COLORS.separator, borderRadius: 4 },
+  skeletonSymbol: { width: 64, height: 18, marginBottom: 8 },
+  skeletonName: { width: 120, height: 14 },
+  skeletonPrice: { width: 56, height: 16, marginBottom: 6 },
+  skeletonChip: { width: 52, height: 14 },
   row: { flexDirection: 'row', alignItems: 'center' },
   symbolRow: { flex: 1 },
   symbol: { fontSize: 17, fontWeight: '600', color: COLORS.text },
   name: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
   priceCol: { alignItems: 'flex-end', marginRight: 8 },
   price: { fontSize: 16, fontWeight: '600', color: COLORS.text },
-  change: { fontSize: 13, marginTop: 2 },
+  chip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginTop: 4 },
+  chipGreen: { backgroundColor: 'rgba(52, 199, 89, 0.2)' },
+  chipRed: { backgroundColor: 'rgba(255, 59, 48, 0.2)' },
+  change: { fontSize: 13, fontWeight: '600' },
   positive: { color: COLORS.positive },
   negative: { color: COLORS.negative },
   sub: { color: COLORS.textSecondary, marginTop: 12, textAlign: 'center' },
   hint: { color: COLORS.textTertiary, marginTop: 8, fontSize: 12, textAlign: 'center' },
+  retryBtn: { marginTop: 16, paddingVertical: 12, paddingHorizontal: 24, backgroundColor: COLORS.electricBlue, borderRadius: 10 },
+  retryText: { fontSize: 16, fontWeight: '600', color: '#fff' },
   empty: { color: COLORS.textSecondary, textAlign: 'center', marginTop: 24 },
 });

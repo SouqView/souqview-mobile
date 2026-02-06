@@ -21,7 +21,7 @@ const CHART_HEIGHT = 220;
 const PADDING = 20;
 
 const TIMEFRAME_OPTIONS = [
-  { id: 'today', label: 'Today' },
+  { id: '1D', label: '1D' },
   { id: '1W', label: '1W' },
   { id: '1M', label: '1M' },
   { id: '1Y', label: '1Y' },
@@ -83,12 +83,13 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
   const [loadingPredicted, setLoadingPredicted] = useState(true);
 
   const data = historical?.data ?? [];
-  const lastClose = data.length > 0 ? data[data.length - 1].close : (currentPrice ?? 0);
+  const lastCandle = data.length > 0 ? data[data.length - 1] : null;
+  const lastClose = (lastCandle != null && Number.isFinite(Number(lastCandle.close)) ? Number(lastCandle.close) : null) ?? (currentPrice ?? 0) ?? 0;
 
   const [timeframe, setTimeframe] = useState<TimeframeId>('1W');
 
-  /** Map UI timeframe to API: 1D, 1W, 1M, 1Y */
-  const apiTimeframe = timeframe === 'today' ? '1D' : timeframe;
+  /** API timeframe: 1D, 1W, 1M, 1Y */
+  const apiTimeframe = timeframe;
 
   useEffect(() => {
     let cancelled = false;
@@ -268,13 +269,16 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
       <View style={styles.rationaleCard}>
         <View style={styles.rationaleHeader}>
           <Ionicons name="sparkles" size={22} color={COLORS.electricBlue} />
-          <Text style={styles.rationaleTitle}>Faheem&apos;s Rationale</Text>
+          <Text style={styles.rationaleTitle}>Faheem&apos;s Rationale — {apiTimeframe}</Text>
         </View>
         {loadingRationale ? (
           <ActivityIndicator color={COLORS.electricBlue} style={styles.rationaleLoader} />
         ) : (
           <Text style={styles.rationaleBody} selectable>
-            {rationale || `AI analysis for ${symbol} will appear here when the service is available.`}
+            {rationale ? (() => {
+              const sentences = rationale.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(Boolean);
+              return sentences.slice(0, 3).join(' ').trim() || rationale;
+            })() : `AI analysis for ${symbol} will appear here when the service is available.`}
           </Text>
         )}
       </View>

@@ -1,12 +1,43 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
+import React, { useMemo, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, useWindowDimensions, Animated } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { COLORS, TYPO } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import { StockDetailProvider, useStockDetail } from '../../contexts/StockDetailContext';
 import { useExpertise } from '../../contexts/ExpertiseContext';
 import { toFaheemMode } from '../../src/services/aiService';
+import { useLivePrice } from '../../src/hooks/useLivePrice';
 import { OverviewTab } from './OverviewTab';
 import type { OverviewTabProps } from './OverviewTab';
+
+/** Chart point shape required by react-native-wagmi-charts (timestamp in ms). */
+export type ChartDataPoint = { timestamp: number; value: number };
+
+/**
+ * Map API historical response to chart format { timestamp, value }.
+ * Handles: time (sec or ms), datetime (string), close/value. Crash-proof.
+ */
+export function formatHistoricalToChartData(historical: OverviewTabProps['historical']): ChartDataPoint[] {
+  const data = historical?.data;
+  if (!Array.isArray(data) || data.length === 0) return [];
+  const out: ChartDataPoint[] = [];
+  for (const d of data) {
+    if (d == null || typeof d !== 'object') continue;
+    const rawTime = (d as { time?: number; timestamp?: number }).time ?? (d as { time?: number; timestamp?: number }).timestamp;
+    const rawDt = (d as { datetime?: string; date?: string }).datetime ?? (d as { datetime?: string; date?: string }).date;
+    let timestamp = 0;
+    if (typeof rawTime === 'number' && Number.isFinite(rawTime)) {
+      timestamp = rawTime < 1e12 ? rawTime * 1000 : rawTime;
+    } else if (typeof rawDt === 'string' && rawDt) {
+      const ms = Date.parse(rawDt);
+      timestamp = Number.isFinite(ms) ? ms : 0;
+    }
+    const close = (d as { close?: number; c?: number; value?: number }).close ?? (d as { close?: number; c?: number; value?: number }).c ?? (d as { close?: number; value?: number }).value;
+    const value = typeof close === 'number' && Number.isFinite(close) ? close : Number(close);
+    if (timestamp > 0 && Number.isFinite(value)) out.push({ timestamp, value });
+  }
+  return out;
+}
 import { NewsTab } from './NewsTab';
 import { FinancialsTab } from './FinancialsTab';
 import type { FinancialsTabProps } from './FinancialsTab';
@@ -18,31 +49,71 @@ import { TradeButton } from '../TradeButton';
 
 const Tab = createMaterialTopTabNavigator();
 
+const FLASH_DURATION_MS = 400;
+
 function PriceHeader() {
+  const { colors } = useTheme();
   const { detail, loadingDetail, symbol } = useStockDetail();
+  const { currentPrice: livePrice, previousPrice, percentChange: livePercentChange } = useLivePrice(symbol, 5000);
+
   const stats = detail?.statistics;
-  const price = stats?.currentPrice ?? 0;
-  const change = stats?.percent_change ?? 0;
-  const isPositive = change >= 0;
+  const fallbackPrice = Number(stats?.currentPrice) || 0;
+  const fallbackChange = Number(stats?.percent_change) || 0;
+  const priceNum = livePrice !== undefined ? livePrice : fallbackPrice;
+  const changeNum = livePercentChange !== undefined ? livePercentChange : fallbackChange;
+  const isPositive = changeNum >= 0;
+
   const profile = detail?.profile as { name?: string | { en?: string }; sector?: string | { en?: string }; description?: string | { en?: string } } | undefined;
   const nameStr = typeof profile?.name === 'string' ? profile.name : profile?.name?.en;
   const sectorStr = typeof profile?.sector === 'string' ? profile.sector : profile?.sector?.en;
 
-  const changeStr = price ? `${isPositive ? '+' : ''}${change?.toFixed(2) ?? '0'}%` : '—';
+  const flashAnim = useRef(new Animated.Value(0)).current;
+  const prevLiveRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (livePrice === undefined || previousPrice === undefined || livePrice === previousPrice) return;
+    if (prevLiveRef.current === livePrice) return;
+    prevLiveRef.current = livePrice;
+    flashAnim.setValue(0);
+    Animated.timing(flashAnim, {
+      toValue: 1,
+      duration: FLASH_DURATION_MS,
+      useNativeDriver: false,
+    }).start(() => {
+      flashAnim.setValue(0);
+    });
+  }, [livePrice, previousPrice, flashAnim]);
+
+  const priceColor = flashAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [
+      colors.text,
+      previousPrice !== undefined && livePrice !== undefined
+        ? livePrice > previousPrice
+          ? COLORS.positive
+          : COLORS.negative
+        : colors.text,
+      colors.text,
+    ],
+  });
+
+  const changeStr = priceNum ? `${isPositive ? '+' : ''}${changeNum.toFixed(2)}%` : '—';
+  const showPrice = !loadingDetail || livePrice !== undefined;
+
   return (
-    <View style={styles.header}>
-      <Text style={styles.largeTitle}>{nameStr || symbol}</Text>
+    <View style={[styles.header, { backgroundColor: colors.background }]}>
+      <Text style={[styles.largeTitle, { color: colors.text }]}>{nameStr || symbol}</Text>
       {(nameStr && sectorStr) && (
-        <Text style={styles.subtitle} numberOfLines={1}>{sectorStr}</Text>
+        <Text style={[styles.subtitle, { color: colors.textTertiary }]} numberOfLines={1}>{sectorStr}</Text>
       )}
       <View style={styles.priceRow}>
-        {loadingDetail ? (
-          <Text style={styles.price}>—</Text>
+        {!showPrice ? (
+          <Text style={[styles.price, { color: colors.text }]}>—</Text>
         ) : (
           <>
-            <Text style={styles.price} numberOfLines={1}>
-              {price ? price.toFixed(2) : '—'}
-            </Text>
+            <Animated.Text style={[styles.price, { color: priceColor }]} numberOfLines={1}>
+              {priceNum ? priceNum.toFixed(2) : '—'}
+            </Animated.Text>
             <View style={[styles.pill, isPositive ? styles.pillGreen : styles.pillRed]}>
               <Text style={[styles.pillText, isPositive ? styles.positive : styles.negative]}>
                 {changeStr}
@@ -57,15 +128,18 @@ function PriceHeader() {
 
 function OverviewScreen() {
   const { expertiseLevel } = useExpertise();
-  const { symbol, detail, historical, loadingDetail } = useStockDetail();
+  const { symbol, detail, historical, loadingDetail, loadDetail } = useStockDetail();
   const mode = toFaheemMode(expertiseLevel);
+  const chartData = useMemo(() => formatHistoricalToChartData(historical as OverviewTabProps['historical']), [historical]);
   return (
     <OverviewTab
       symbol={symbol}
       detail={detail as OverviewTabProps['detail']}
       historical={historical as OverviewTabProps['historical']}
+      chartData={chartData}
       loading={loadingDetail}
       faheemMode={mode}
+      onRefresh={loadDetail}
     />
   );
 }
@@ -123,17 +197,18 @@ function TradeButtonWrapper() {
 
 export function StockDetailView({ symbol }: StockDetailViewProps) {
   const { width } = useWindowDimensions();
+  const { colors } = useTheme();
 
   return (
     <StockDetailProvider symbol={symbol}>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <PriceHeader />
         <Tab.Navigator
           screenOptions={{
             tabBarScrollEnabled: true,
-            tabBarStyle: { backgroundColor: COLORS.background },
-            tabBarIndicatorStyle: { backgroundColor: COLORS.electricBlue },
-            tabBarLabelStyle: { fontSize: 12, fontWeight: '600', color: COLORS.textSecondary },
+            tabBarStyle: { backgroundColor: colors.background },
+            tabBarIndicatorStyle: { backgroundColor: colors.electricBlue },
+            tabBarLabelStyle: { fontSize: 12, fontWeight: '600', color: colors.textTertiary },
             tabBarItemStyle: { width: width > 400 ? undefined : 72 },
           }}
         >
@@ -152,9 +227,8 @@ export function StockDetailView({ symbol }: StockDetailViewProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
+  container: { flex: 1 },
   header: {
-    backgroundColor: COLORS.background,
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 20,

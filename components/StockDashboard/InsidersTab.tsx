@@ -18,7 +18,6 @@ import { useExpertise } from '../../contexts/ExpertiseContext';
 import { getFaheemInsiders, toFaheemMode } from '../../src/services/aiService';
 
 const ROWS_PER_PAGE = 5;
-const LATEST_TRANSACTIONS_FOR_AI = 20;
 
 /** API returns insider_transactions with full_name, transaction_type (e.g. "Sale", "Buy", "Purchase"), date, etc. */
 export type InsiderTx = {
@@ -75,20 +74,31 @@ function getTransactionValue(tx: InsiderTx): number {
   return 0;
 }
 
-/** API sends transaction_type e.g. "Sale", "Buy", "Purchase", "P", "S". */
+/** API sends transaction_type e.g. "Sale", "Buy", "Purchase", "P", "S". Default to SELL only when ambiguous. */
 function normalizeAction(transactionType: string | undefined, action?: string): 'BUY' | 'SELL' {
   const raw = (transactionType || action || '').trim();
   const t = raw.toLowerCase();
-  if (t === 'sale' || t === 'sell' || t === 's') return 'SELL';
-  if (t === 'buy' || t === 'purchase' || t === 'p' || t === 'acquired' || t === 'option exercise') return 'BUY';
+  if (t === 'sale' || t === 'sell' || t === 's' || t === 'disposition' || t === 'disposal') return 'SELL';
+  if (t === 'buy' || t === 'purchase' || t === 'p' || t === 'acquired' || t === 'acquisition' || t === 'option exercise' || t === 'option_exercise') return 'BUY';
   const u = raw.toUpperCase();
-  if (u === 'P' || u === 'B' || u.startsWith('P') || u.startsWith('B')) return 'BUY';
-  if (u === 'S' || u.startsWith('S')) return 'SELL';
+  if (u === 'P' || u === 'B' || u.startsWith('P') || u.startsWith('B') || u === 'A') return 'BUY';
+  if (u === 'S' || u.startsWith('S') || u === 'D') return 'SELL';
   return 'SELL';
 }
 
+/** Date for display: prefer transaction_date (API), then report_date, etc. */
 function getDateStr(tx: InsiderTx): string | undefined {
-  return tx.transaction_date ?? tx.report_date ?? tx.reported_date ?? tx.filing_date ?? tx.date;
+  const t = tx as Record<string, unknown>;
+  return (
+    tx.transaction_date ??
+    tx.report_date ??
+    tx.reported_date ??
+    tx.filing_date ??
+    tx.date ??
+    (t.acquisition_date as string) ??
+    (t.disposal_date as string) ??
+    (t.reporting_date as string)
+  );
 }
 
 /** Format as YYYY-MM-DD for table display */
@@ -183,23 +193,20 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
   const [faheemSummary, setFaheemSummary] = useState('');
   const [faheemLoading, setFaheemLoading] = useState(false);
 
-  const latestForAi = useMemo(() => {
-    const withDate = list
-      .map((tx) => ({ tx, ts: getDateStr(tx) ? new Date(getDateStr(tx)!).getTime() : 0 }))
-      .filter(({ ts }) => !Number.isNaN(ts));
-    withDate.sort((a, b) => b.ts - a.ts);
-    return withDate.slice(0, LATEST_TRANSACTIONS_FOR_AI).map(({ tx }) => tx);
-  }, [list]);
+  const totalPages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE));
+  const pageIndex = Math.min(currentPage, totalPages - 1);
+  const start = pageIndex * ROWS_PER_PAGE;
+  const pageRows = list.slice(start, start + ROWS_PER_PAGE);
 
   useEffect(() => {
     let cancelled = false;
-    if (latestForAi.length === 0) {
-      setFaheemSummary('No recent insider transactions to analyze.');
+    if (pageRows.length === 0) {
+      setFaheemSummary(list.length === 0 ? 'No insider transactions to analyze.' : 'No transactions on this page.');
       setFaheemLoading(false);
       return;
     }
     setFaheemLoading(true);
-    getFaheemInsiders(symbol, latestForAi, toFaheemMode(expertiseLevel))
+    getFaheemInsiders(symbol, pageRows, toFaheemMode(expertiseLevel))
       .then((res) => {
         if (!cancelled) setFaheemSummary(res.summary ?? res.rationale ?? '');
       })
@@ -210,12 +217,7 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
         if (!cancelled) setFaheemLoading(false);
       });
     return () => { cancelled = true; };
-  }, [symbol, expertiseLevel, list.length]);
-
-  const totalPages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE));
-  const page = Math.min(currentPage, totalPages - 1);
-  const start = page * ROWS_PER_PAGE;
-  const pageRows = list.slice(start, start + ROWS_PER_PAGE);
+  }, [symbol, expertiseLevel, pageIndex, list.length]);
 
   if (loading) {
     return (
@@ -240,7 +242,7 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
       contentContainerStyle={styles.list}
       showsVerticalScrollIndicator={false}
     >
-      <FaheemInsidersSummary symbol={symbol} list={latestForAi} summary={faheemSummary} loading={faheemLoading} />
+      <FaheemInsidersSummary symbol={symbol} list={pageRows} summary={faheemSummary} loading={faheemLoading} />
       <View style={styles.table}>
         <TableHeader />
         {pageRows.map((item, i) => (
@@ -250,25 +252,25 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
       {totalPages > 1 && (
         <View style={styles.pagination}>
           <TouchableOpacity
-            style={[styles.pageBtn, page <= 0 && styles.pageBtnDisabled]}
+            style={[styles.pageBtn, pageIndex <= 0 && styles.pageBtnDisabled]}
             onPress={() => {
               if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               setCurrentPage((p) => Math.max(0, p - 1));
             }}
-            disabled={page <= 0}
+            disabled={pageIndex <= 0}
           >
             <Text style={styles.pageBtnText}>Prev</Text>
           </TouchableOpacity>
           <Text style={styles.pageIndicator}>
-            Page {page + 1} of {totalPages}
+            Page {pageIndex + 1} of {totalPages}
           </Text>
           <TouchableOpacity
-            style={[styles.pageBtn, page >= totalPages - 1 && styles.pageBtnDisabled]}
+            style={[styles.pageBtn, pageIndex >= totalPages - 1 && styles.pageBtnDisabled]}
             onPress={() => {
               if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               setCurrentPage((p) => Math.min(totalPages - 1, p + 1));
             }}
-            disabled={page >= totalPages - 1}
+            disabled={pageIndex >= totalPages - 1}
           >
             <Text style={styles.pageBtnText}>Next</Text>
           </TouchableOpacity>

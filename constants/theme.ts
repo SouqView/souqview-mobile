@@ -38,11 +38,11 @@ export const COLORS: ThemeColors = {
   separator: '#38383A',
 };
 
-/** Light theme – White background, dark blue text. */
+/** Light theme – System Grey 6 (#F2F2F7) background; cards contrast with white. */
 export const LIGHT_COLORS: ThemeColors = {
   ...COLORS,
-  background: '#FFFFFF',
-  backgroundSecondary: '#F2F2F7',
+  background: '#F2F2F7',
+  backgroundSecondary: '#E5E5EA',
   card: '#FFFFFF',
   text: '#1C1C1E',
   textSecondary: '#3A3A3C',

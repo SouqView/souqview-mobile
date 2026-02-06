@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -14,7 +14,7 @@ import { useExpertise } from '../../contexts/ExpertiseContext';
 import type { ExpertiseLevel } from '../../services/profileService';
 
 export function SettingsScreen() {
-  const { colors, mode, setTheme } = useTheme();
+  const { colors, mode, setTheme, toggleTheme, isDark } = useTheme();
   const { expertiseLevel, setExpertiseLevel, isLoading } = useExpertise();
   const styles = makeStyles(colors);
 
@@ -22,6 +22,11 @@ export function SettingsScreen() {
     if (level === expertiseLevel) return;
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setExpertiseLevel(level);
+  };
+
+  const onThemeSwitch = (value: boolean) => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setTheme(value ? 'dark' : 'light');
   };
 
   return (
@@ -32,23 +37,15 @@ export function SettingsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Appearance</Text>
         <Text style={styles.sectionHint}>Light or Dark theme for the app.</Text>
-        <View style={styles.segmentWrap}>
-          <TouchableOpacity
-            style={[styles.segmentBtn, mode === 'light' && styles.segmentBtnActive]}
-            onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setTheme('light'); }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.segmentEmoji}>☀️</Text>
-            <Text style={[styles.segmentLabel, mode === 'light' && styles.segmentLabelActive]}>Light</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.segmentBtn, mode === 'dark' && styles.segmentBtnActivePro]}
-            onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setTheme('dark'); }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.segmentEmoji}>🌙</Text>
-            <Text style={[styles.segmentLabel, mode === 'dark' && styles.segmentLabelActivePro]}>Dark</Text>
-          </TouchableOpacity>
+        <View style={styles.themeRow}>
+          <Text style={styles.themeLabel}>{isDark ? 'Dark' : 'Light'} Mode</Text>
+          <Switch
+            value={isDark}
+            onValueChange={onThemeSwitch}
+            trackColor={{ false: colors.separator, true: colors.electricBlueDim }}
+            thumbColor={isDark ? colors.electricBlue : colors.card}
+            ios_backgroundColor={colors.separator}
+          />
         </View>
       </View>
 
@@ -118,6 +115,18 @@ function makeStyles(colors: ThemeColors) {
     section: { marginBottom: 24 },
     sectionTitle: { fontSize: 17, fontWeight: '600', color: colors.text, marginBottom: 4 },
     sectionHint: { fontSize: 13, color: colors.textTertiary, marginBottom: 12 },
+    themeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: colors.card,
+      borderRadius: 14,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    themeLabel: { fontSize: 17, fontWeight: '600', color: colors.text },
     segmentWrap: { flexDirection: 'row', gap: 12 },
     segmentBtn: {
       flex: 1,

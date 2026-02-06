@@ -38,6 +38,21 @@ type TechnicalsData = {
 };
 
 type Candle = { close: number; open?: number; high?: number; low?: number };
+/** ATR(period): average of true range over last `period` candles. */
+function computeATR(candles: Array<{ high?: number; low?: number; close: number }>, period: number): number | null {
+  if (!candles?.length || period < 1) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1].close;
+    const high = candles[i].high ?? candles[i].close;
+    const low = candles[i].low ?? candles[i].close;
+    const tr = Math.max(high - low, Math.abs(high - prev), Math.abs(low - prev));
+    trs.push(tr);
+  }
+  if (trs.length < period) return null;
+  const slice = trs.slice(-period);
+  return slice.reduce((a, b) => a + b, 0) / period;
+}
 
 export interface TechnicalsTabProps {
   symbol: string;
@@ -131,7 +146,8 @@ function VerdictHeader({ verdict }: { verdict: 'Strong Buy' | 'Neutral' | 'Sell'
 /** Compute all derived indicator data from raw technicals + closes. Safe to call with empty {}. */
 function computeDerived(
   raw: TechnicalsData,
-  closes: number[]
+  closes: number[],
+  historicalCandles: Array<{ high?: number; low?: number; close: number }> = []
 ): {
   indicators: Array<{ name?: string; value?: string; status?: string }>;
   rsiVal: number | null;
@@ -153,10 +169,14 @@ function computeDerived(
   bbDisplay: string;
   bbColor: SignalColor;
   stochDisplay: string;
+  stochColor: SignalColor;
+  atrDisplay: string;
+  atrVal: number | null;
   fullDataset: Record<string, unknown>;
   verdict: 'Strong Buy' | 'Neutral' | 'Sell';
 } {
   const indicators = raw.data ?? raw.indicators ?? [];
+  const candles = historicalCandles.length >= 14 ? historicalCandles : (raw as { candles?: Array<{ high?: number; low?: number; close: number }> }).candles ?? [];
   const rsiLatest = raw.rsi?.values?.[0];
   const rsiVal = parseNum(rsiLatest?.rsi) ?? (typeof raw.rsi === 'number' ? raw.rsi : null) ?? parseNum(indicators.find((i: { name?: string }) => /rsi/i.test(i.name ?? ''))?.value);
   const macdLatest = raw.macd?.values?.[0];
@@ -199,6 +219,11 @@ function computeDerived(
   const stochDisplay = (stochKNum != null || stochDNum != null)
     ? `%K ${stochKNum?.toFixed(1) ?? '—'}  %D ${stochDNum?.toFixed(1) ?? '—'}`
     : (typeof stochValues === 'object' && stochValues != null && 'value' in stochValues ? String((stochValues as { value?: string }).value ?? '—') : '—');
+  const stochBullish = stochKNum != null && stochDNum != null && stochKNum > stochDNum && stochKNum < 20;
+  const stochBearish = stochKNum != null && stochDNum != null && stochKNum < stochDNum && stochKNum > 80;
+  const stochColor: SignalColor = stochBullish ? 'green' : stochBearish ? 'red' : 'neutral';
+  const atrVal = candles.length >= 15 ? computeATR(candles, 14) : parseNum(indicators.find((i: { name?: string }) => /atr/i.test(i.name ?? ''))?.value);
+  const atrDisplay = atrVal != null ? atrVal.toFixed(2) : '—';
   const fullDataset = {
     rsi: rsiVal,
     macd: macdNum,
@@ -209,8 +234,9 @@ function computeDerived(
     price,
     bollinger: { upper: bbUpper, lower: bbLower, middle: bbMiddle },
     stochastic: { k: stochKNum ?? undefined, d: stochDNum ?? undefined },
+    atr: atrVal ?? undefined,
   };
-  const signals: SignalColor[] = [rsiColor, ma200Color, ma50Color, ma20Color, macdColor, bbColor].filter((c) => c !== 'neutral');
+  const signals: SignalColor[] = [rsiColor, ma200Color, ma50Color, ma20Color, macdColor, bbColor, stochColor].filter((c) => c !== 'neutral');
   const greenCount = signals.filter((c) => c === 'green').length;
   const redCount = signals.filter((c) => c === 'red').length;
   const verdict: 'Strong Buy' | 'Neutral' | 'Sell' = greenCount > redCount ? 'Strong Buy' : redCount > greenCount ? 'Sell' : 'Neutral';
@@ -235,6 +261,9 @@ function computeDerived(
     bbDisplay,
     bbColor,
     stochDisplay,
+    stochColor,
+    atrDisplay,
+    atrVal,
     fullDataset,
     verdict,
   };
@@ -249,7 +278,8 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
 
   const safeRaw = useMemo(() => technicals ?? {}, [technicals]);
   const closes = useMemo(() => (historical?.data ?? []).map((d) => d.close).filter((n) => Number.isFinite(n)), [historical?.data]);
-  const derived = useMemo(() => computeDerived(safeRaw as TechnicalsData, closes), [safeRaw, closes]);
+  const historicalCandles = useMemo(() => (historical?.data ?? []).filter((d): d is { high?: number; low?: number; close: number } => typeof d?.close === 'number'), [historical?.data]);
+  const derived = useMemo(() => computeDerived(safeRaw as TechnicalsData, closes, historicalCandles), [safeRaw, closes, historicalCandles]);
 
   useEffect(() => {
     loadTechnicals(timeframe);
@@ -281,7 +311,7 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
     );
   }
 
-  const { indicators, rsiVal, macdLatest, macdVal, sma20, sma50, sma200, price, priceVsSma20, priceVsSma50, priceVsSma200, rsiColor, ma20Color, ma50Color, ma200Color, macdColor, bbDisplay, bbColor, stochDisplay, verdict } = derived;
+  const { indicators, rsiVal, macdLatest, macdVal, sma20, sma50, sma200, price, priceVsSma20, priceVsSma50, priceVsSma200, rsiColor, ma20Color, ma50Color, ma200Color, macdColor, bbDisplay, bbColor, stochDisplay, stochColor, atrDisplay, verdict } = derived;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -289,25 +319,22 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
       <VerdictHeader verdict={verdict} />
 
       <View style={styles.heatmapBlock}>
-        <Text style={styles.heatmapTitle}>Indicators (2-column grid)</Text>
+        <Text style={styles.heatmapTitle}>6 Indicators (2-column grid)</Text>
         <View style={styles.indicatorsGrid}>
           <SignalCard title="RSI (14)" value={rsiVal != null ? rsiVal.toFixed(1) : '—'} color={rsiColor} />
           <SignalCard title="MACD" value={macdVal != null ? `${macdVal} / ${macdLatest?.signal ?? '—'}` : '—'} color={macdColor} />
           <SignalCard
-            title="SMA / MA"
-            value={price != null && (sma20 ?? sma50 ?? sma200) != null ? (price > (sma20 ?? sma50 ?? sma200)! ? 'Price > MA' : 'Price < MA') : '—'}
-            color={
-              priceVsSma20 === true || priceVsSma50 === true || priceVsSma200 === true ? 'green'
-              : priceVsSma20 === false || priceVsSma50 === false || priceVsSma200 === false ? 'red'
-              : 'neutral'
-            }
+            title="SMA"
+            value={[sma20, sma50, sma200].some((n) => n != null) ? `20: ${sma20?.toFixed(2) ?? '—'} 50: ${sma50?.toFixed(2) ?? '—'} 200: ${sma200?.toFixed(2) ?? '—'}` : '—'}
+            color={priceVsSma20 === true || priceVsSma50 === true || priceVsSma200 === true ? 'green' : priceVsSma20 === false || priceVsSma50 === false || priceVsSma200 === false ? 'red' : 'neutral'}
           />
           <SignalCard title="Bollinger Bands" value={bbDisplay} color={bbColor} />
-          <View style={[styles.signalCard, styles.signalCardNeutral]}>
-            <Text style={styles.signalCardLabel}>Stochastic</Text>
-            <Text style={[styles.signalCardValue, TYPO.tabular, styles.signalTextNeutral]}>{stochDisplay}</Text>
-          </View>
+          <SignalCard title="Stochastic" value={stochDisplay} color={stochColor} />
+          <SignalCard title="ATR (14)" value={atrDisplay} color="neutral" />
         </View>
+        {bbDisplay && /U:/.test(bbDisplay) && (
+          <Text style={styles.bbHint}>Upper / Middle / Lower bands shown above.</Text>
+        )}
       </View>
 
       {(aiRationale || aiLoading) && (
@@ -372,6 +399,7 @@ const styles = StyleSheet.create({
   verdictHint: { fontSize: 13, color: COLORS.textTertiary, marginTop: 8 },
   heatmapBlock: { marginBottom: 20 },
   heatmapTitle: { fontSize: 17, fontWeight: '600', color: COLORS.text, marginBottom: 12 },
+  bbHint: { fontSize: 12, color: COLORS.textTertiary, marginTop: 8 },
   heatmapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   indicatorsGrid: {
     flexDirection: 'row',

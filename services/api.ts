@@ -48,13 +48,19 @@ export function filterUSStocksOnly<T extends { symbol: string }>(items: T[]): T[
 }
 
 // ─── Twelve Data mapping (backend proxies these) ─────────────────────────────
-/** Twelve Data /profile: description, sector, industry, executives */
+/** Twelve Data /profile: description, longBusinessSummary, sector, industry, executives, market_cap, pe, 52w */
 export type StockProfile = {
   description?: string;
+  longBusinessSummary?: string;
   sector?: string;
   industry?: string;
   name?: string;
-  executives?: Array<{ name?: string; title?: string }>;
+  market_cap?: string | number;
+  pe?: string | number;
+  fifty_two_week_high?: number;
+  fifty_two_week_low?: number;
+  fifty_two_week?: { high?: number; low?: number };
+  executives?: Array<{ name?: string; title?: string }> | null;
 };
 
 /** Fetch profile from Twelve Data /profile endpoint (description, sector, industry, executives). */
@@ -74,8 +80,23 @@ export async function getStockProfileAndQuote(symbol: string) {
   return data;
 }
 
+/** Normalize profile for UI: description from description or longBusinessSummary; executives as array. */
+function normalizeProfile(p: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!p || typeof p !== 'object') return null;
+  const desc = (p.description && typeof p.description === 'string')
+    ? p.description
+    : (p.longBusinessSummary && typeof p.longBusinessSummary === 'string')
+      ? p.longBusinessSummary
+      : (p.description && typeof p.description === 'object' && (p.description as { en?: string }).en)
+        ? (p.description as { en?: string }).en
+        : '';
+  const execRaw = p.executives ?? p.officers ?? p.key_executives ?? p.management;
+  const executives = Array.isArray(execRaw) ? execRaw : (execRaw != null && typeof execRaw === 'object' ? Object.values(execRaw) : []);
+  return { ...p, description: desc || (p.description as string), executives };
+}
+
 /** Fetches stock-detail and merges Twelve Data /profile (description, sector, industry, executives). */
-export async function getStockDetail(symbol: string): Promise<{ data?: { profile?: StockProfile; statistics?: unknown; [k: string]: unknown } }> {
+export async function getStockDetail(symbol: string): Promise<{ data?: { profile?: StockProfile; statistics?: unknown; quote?: Record<string, unknown>; [k: string]: unknown } }> {
   const [detailRes, profileRes] = await Promise.all([
     getStockProfileAndQuote(symbol),
     getStockProfile(symbol),
@@ -85,8 +106,87 @@ export async function getStockDetail(symbol: string): Promise<{ data?: { profile
     : detailRes;
   const data = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const existingProfile = (data.profile && typeof data.profile === 'object') ? data.profile as Record<string, unknown> : {};
-  const merged = { ...data, profile: { ...existingProfile, ...(profileRes || {}) } };
+  const mergedProfile = { ...existingProfile, ...(profileRes || {}) };
+  const normalizedProfile = normalizeProfile(mergedProfile);
+  const merged = { ...data, profile: normalizedProfile ?? mergedProfile };
   return { data: merged };
+}
+
+/** Candle shape for charts (time in seconds or ms, or datetime string). */
+export type HistoricalCandle = {
+  time?: number;
+  datetime?: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+};
+
+/** Normalize various API shapes to { data: HistoricalCandle[] } for Overview chart. */
+export function normalizeHistorical(raw: unknown): { data: HistoricalCandle[] } {
+  if (!raw || typeof raw !== 'object') return { data: [] };
+  const r = raw as Record<string, unknown>;
+  let arr: unknown[] = [];
+  if (Array.isArray(r.data)) arr = r.data;
+  else if (Array.isArray(r.values)) arr = r.values;
+  else if (Array.isArray(r.candles)) arr = r.candles;
+  else if (Array.isArray(r)) arr = raw as unknown[];
+  const data = arr
+    .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
+    .map((item) => {
+      const t = item.time ?? item.timestamp;
+      const dt = item.datetime;
+      const time = typeof t === 'number' ? t : (typeof dt === 'string' ? new Date(dt).getTime() / 1000 : 0);
+      const open = Number(item.open ?? item.o ?? 0);
+      const high = Number(item.high ?? item.h ?? 0);
+      const low = Number(item.low ?? item.l ?? 0);
+      const close = Number(item.close ?? item.c ?? 0);
+      return { time, datetime: typeof dt === 'string' ? dt : undefined, open, high, low, close, volume: item.volume as number | undefined };
+    })
+    .filter((c) => Number.isFinite(c.close));
+  return { data };
+}
+
+/** Combined fetch for Stock Detail screen: full detail (for stats/executives), historical (1day). */
+export async function getStockDetails(symbol: string): Promise<{
+  detail: Record<string, unknown> | null;
+  quote: Record<string, unknown> | null;
+  profile: StockProfile | null;
+  historical: { data: HistoricalCandle[] };
+}> {
+  const [detailRes, histRes] = await Promise.all([
+    getStockDetail(symbol),
+    getHistoricalData(symbol, '1day'),
+  ]);
+  let merged = (detailRes?.data as Record<string, unknown> | undefined) ?? null;
+  const quote = (merged?.quote ?? merged) as Record<string, unknown> | null ?? null;
+  let profile = (merged?.profile as StockProfile) ?? null;
+  if (merged) {
+    if (merged.profile && typeof merged.profile === 'object') {
+      const normalized = normalizeProfile(merged.profile as Record<string, unknown>);
+      if (normalized) merged.profile = normalized;
+      profile = merged.profile as StockProfile;
+    }
+    const stats = (merged.statistics && typeof merged.statistics === 'object') ? merged.statistics as Record<string, unknown> : {};
+    const keyStats = quote && typeof quote === 'object' ? quote as Record<string, unknown> : {};
+    const f52 = keyStats.fifty_two_week && typeof keyStats.fifty_two_week === 'object' ? keyStats.fifty_two_week as { high?: number; low?: number } : null;
+    merged.statistics = {
+      ...stats,
+      market_cap: stats.market_cap ?? keyStats.market_cap ?? keyStats.market_capitalization,
+      pe: stats.pe ?? keyStats.pe ?? keyStats.pe_ratio,
+      volume: stats.volume ?? keyStats.volume ?? keyStats.average_volume,
+      fiftyTwoWeekHigh: stats.fiftyTwoWeekHigh ?? keyStats.fifty_two_week_high ?? f52?.high,
+      fiftyTwoWeekLow: stats.fiftyTwoWeekLow ?? keyStats.fifty_two_week_low ?? f52?.low,
+    };
+  }
+  const historical = normalizeHistorical(histRes ?? null);
+  return {
+    detail: merged,
+    quote: quote ?? null,
+    profile,
+    historical,
+  };
 }
 
 // News → /news/stock/:ticker (Latest News tab)
@@ -164,6 +264,17 @@ export async function getOverviewInsight(
 export async function getMarketSnapshot(exchange: string) {
   const { data } = await client.get(`/stock/market-snapshot/${exchange}`);
   return data;
+}
+
+/** Batch fetch: one request for comma-separated symbols. Prevents rate limiting. */
+export async function getMarketSnapshotBySymbols(symbols: string[]): Promise<{ marketSnapshot: USSnapshotItem[] }> {
+  const list = symbols.filter(Boolean).slice(0, 30);
+  if (list.length === 0) return { marketSnapshot: [] };
+  const { data } = await client.get<{ marketSnapshot?: USSnapshotItem[] }>('/stock/market-snapshot', {
+    params: { symbols: list.join(',') },
+  });
+  const snapshot = data?.marketSnapshot ?? [];
+  return { marketSnapshot: filterUSStocksOnly(snapshot) };
 }
 
 export type USSnapshotItem = {

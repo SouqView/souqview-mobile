@@ -235,10 +235,10 @@ function getPeriodLabel(row: IncomeRow | BalanceRow | CashRow, isQuarterly: bool
   return '';
 }
 
-/** Parse row date to timestamp for sorting (newest first). */
+/** Parse row date to timestamp for sorting. Newest first (date DESC). */
 function getRowSortKey(row: IncomeRow | BalanceRow | CashRow): number {
   const r = row as Record<string, unknown>;
-  const date = r.fiscal_date ?? r.period ?? r.fiscal_year ?? r.date;
+  const date = r.fiscal_date ?? r.period ?? r.fiscal_year ?? r.date ?? r.reporting_date ?? r.end_date;
   if (typeof date === 'string') {
     const t = new Date(date).getTime();
     return Number.isNaN(t) ? 0 : t;
@@ -247,8 +247,14 @@ function getRowSortKey(row: IncomeRow | BalanceRow | CashRow): number {
   return 0;
 }
 
+/** Sort API data by date DESCENDING (newest first). */
 function sortByDateDesc<T extends IncomeRow | BalanceRow | CashRow>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => getRowSortKey(b) - getRowSortKey(a));
+  return [...rows].sort((a, b) => {
+    const keyA = getRowSortKey(a);
+    const keyB = getRowSortKey(b);
+    if (keyB !== keyA) return keyB - keyA;
+    return 0;
+  });
 }
 
 const MAX_QUARTERS = 8;

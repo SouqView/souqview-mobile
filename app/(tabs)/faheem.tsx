@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 13, color: COLORS.textTertiary, marginTop: 4 },
   chatWrap: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: 24 },
+  scrollContent: { padding: 16, paddingBottom: 120 },
   empty: {
     alignItems: 'center',
     paddingVertical: 48,

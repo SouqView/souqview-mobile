@@ -14,6 +14,8 @@ interface ThemeContextValue {
   isDark: boolean;
   mode: ThemeMode;
   setTheme: (mode: ThemeMode) => Promise<void>;
+  /** Toggle between light and dark. */
+  toggleTheme: () => Promise<void>;
   colors: ThemeColors;
 }
 
@@ -37,11 +39,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(THEME_STORAGE_KEY, newMode);
   }, []);
 
+  const toggleTheme = useCallback(async () => {
+    const next = mode === 'dark' ? 'light' : 'dark';
+    setModeState(next);
+    await AsyncStorage.setItem(THEME_STORAGE_KEY, next);
+  }, [mode]);
+
   const colors = mode === 'dark' ? COLORS : LIGHT_COLORS;
   const value: ThemeContextValue = {
     isDark: mode === 'dark',
     mode,
     setTheme,
+    toggleTheme,
     colors,
   };
 

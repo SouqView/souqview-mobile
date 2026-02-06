@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,16 +6,20 @@ import {
   Dimensions,
   ActivityIndicator,
   ScrollView,
+  TouchableOpacity,
+  RefreshControl,
   NativeSyntheticEvent,
   NativeTouchEvent,
-  TouchableOpacity,
+  Platform,
 } from 'react-native';
-import Svg, { Polyline, Circle } from 'react-native-svg';
+import Svg, { Polyline, Circle, Line, Rect } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../contexts/ThemeContext';
 import { COLORS, TYPO } from '../../constants/theme';
 import { getFaheemOverview } from '../../src/services/aiService';
 import type { FaheemMode } from '../../src/services/aiService';
+import { getHistoricalData } from '../../services/api';
 
 type Candle = { time: number; open: number; high: number; low: number; close: number; volume?: number };
 
@@ -24,6 +28,11 @@ export type StockProfileOverview = {
   description?: string;
   sector?: string;
   industry?: string;
+  market_cap?: string | number;
+  pe?: string | number;
+  fifty_two_week_high?: number;
+  fifty_two_week_low?: number;
+  fifty_two_week?: { high?: number; low?: number };
   executives?: Array<{ name?: string; title?: string }>;
   officers?: Array<{ name?: string; title?: string }>;
 };
@@ -35,9 +44,14 @@ type StatsShape = {
   fiftyTwoWeekLow?: number | null;
   volume?: string | number | null;
   market_cap?: string | number | null;
+  marketCap?: string | number | null;
   pe?: string | number | null;
+  peRatio?: number | string | null;
   yield?: string | number | null;
+  dividendYield?: number | null;
 };
+
+export type ChartDataPoint = { timestamp: number; value: number };
 
 export interface OverviewTabProps {
   symbol: string;
@@ -45,24 +59,229 @@ export interface OverviewTabProps {
     statistics?: StatsShape;
     quote?: Record<string, unknown>;
     profile?: StockProfileOverview;
+    error?: 'RATE_LIMIT';
   } | null;
   historical: { data?: Candle[] } | null;
+  /** Pre-formatted chart data from parent (StockDetailView). If set, used for the line chart; else derived from historical. */
+  chartData?: ChartDataPoint[];
   loading: boolean;
   faheemMode?: FaheemMode;
+  /** When user pulls to refresh, re-fetch Profile/Quote (Overview data). */
+  onRefresh?: () => void;
 }
 
-const CHART_HEIGHT = 200;
+const CHART_HEIGHT = 300;
 const PADDING = 20;
+
+/** Sanitizes API data and renders an SVG line or candle chart. */
+function StockLineChart({
+  data,
+  isPositive,
+  type = 'line',
+}: {
+  data: Array<Record<string, unknown>>;
+  isPositive: boolean;
+  type?: 'line' | 'candle';
+}) {
+  const { colors } = useTheme();
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const lastScrubRef = useRef<number | null>(null);
+
+  const chartData = useMemo(() => {
+    if (!data || !Array.isArray(data) || data.length === 0) return null;
+
+    return data
+      .map((item) => {
+        const rawTs = item.timestamp ?? item.time ?? item.datetime;
+        const timestamp =
+          typeof rawTs === 'string'
+            ? new Date(rawTs).getTime()
+            : typeof rawTs === 'number' && Number.isFinite(rawTs)
+              ? rawTs < 1e12
+                ? rawTs * 1000
+                : rawTs
+              : 0;
+        const value = Number(item.value ?? item.close ?? 0);
+        const open = Number(item.open ?? item.close ?? value);
+        const high = Number(item.high ?? Math.max(open, value));
+        const low = Number(item.low ?? Math.min(open, value));
+        const close = Number(item.close ?? item.value ?? value);
+        return { timestamp, value, open, high, low, close };
+      })
+      .filter((item) => !Number.isNaN(item.value) && !Number.isNaN(item.timestamp) && item.timestamp > 0);
+  }, [data]);
+
+  if (!chartData || chartData.length === 0) {
+    return (
+      <View style={{ height: CHART_HEIGHT, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: colors.textSecondary }}>Chart Unavailable</Text>
+      </View>
+    );
+  }
+
+  const lineColor = isPositive ? '#34C759' : '#FF3B30';
+  const chartWidth = Dimensions.get('window').width - PADDING * 2 - 24;
+  const innerHeight = CHART_HEIGHT - 24;
+
+  const candles = type === 'candle' ? chartData : null;
+  const minVal =
+    type === 'candle' && candles?.length
+      ? Math.min(...candles.flatMap((c) => [c.low, c.open, c.close]))
+      : Math.min(...chartData.map((d) => d.value));
+  const maxVal =
+    type === 'candle' && candles?.length
+      ? Math.max(...candles.flatMap((c) => [c.high, c.open, c.close]))
+      : Math.max(...chartData.map((d) => d.value));
+  const range = maxVal - minVal || 1;
+  const step = chartData.length > 1 ? chartWidth / (chartData.length - 1) : 0;
+  const barWidth = Math.max(2, Math.min(step * 0.6, 12));
+
+  const points =
+    type === 'line'
+      ? chartData
+          .map((d, i) => {
+            const x = i * step;
+            const y = CHART_HEIGHT - 12 - ((d.value - minVal) / range) * innerHeight;
+            return `${x},${y}`;
+          })
+          .join(' ')
+      : '';
+
+  const scrubbedPoint = scrubIndex != null ? chartData[scrubIndex] : undefined;
+  const scrubX = scrubIndex != null ? scrubIndex * step + (type === 'candle' ? step / 2 : 0) : null;
+  const scrubY =
+    scrubbedPoint != null
+      ? CHART_HEIGHT - 12 - ((scrubbedPoint.value - minVal) / range) * innerHeight
+      : null;
+
+  const onTouch = (evt: NativeSyntheticEvent<NativeTouchEvent>) => {
+    const touch = evt.nativeEvent.touches[0];
+    if (!touch || chartData.length < 2) return;
+    const x = touch.pageX - PADDING;
+    const i = Math.round((x / chartWidth) * (chartData.length - 1));
+    const clamped = Math.max(0, Math.min(i, chartData.length - 1));
+    if (clamped !== lastScrubRef.current && Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lastScrubRef.current = clamped;
+    }
+    setScrubIndex(clamped);
+  };
+
+  const toY = (v: number) => CHART_HEIGHT - 12 - ((v - minVal) / range) * innerHeight;
+
+  return (
+    <View
+      style={{ height: CHART_HEIGHT, position: 'relative' }}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={onTouch}
+      onResponderMove={onTouch}
+      onResponderRelease={() => {
+        lastScrubRef.current = null;
+        setScrubIndex(null);
+      }}
+    >
+      {scrubbedPoint != null && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: PADDING,
+            zIndex: 2,
+            backgroundColor: colors.card,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 8,
+          }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text }}>
+            {scrubbedPoint.value.toFixed(2)}
+          </Text>
+        </View>
+      )}
+      <Svg width={chartWidth} height={CHART_HEIGHT}>
+        {type === 'line' && (
+          <Polyline
+            points={points}
+            fill="none"
+            stroke={lineColor}
+            strokeWidth={3}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+        {type === 'candle' &&
+          candles?.map((c, i) => {
+            const x = i * step + (step - barWidth) / 2;
+            const isUp = c.close >= c.open;
+            const bodyTop = toY(Math.max(c.open, c.close));
+            const bodyBottom = toY(Math.min(c.open, c.close));
+            const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+            const wickTop = toY(c.high);
+            const wickBottom = toY(c.low);
+            const fill = isUp ? '#34C759' : '#FF3B30';
+            return (
+              <React.Fragment key={i}>
+                <Line
+                  x1={x + barWidth / 2}
+                  y1={wickTop}
+                  x2={x + barWidth / 2}
+                  y2={wickBottom}
+                  stroke={fill}
+                  strokeWidth={1.5}
+                />
+                <Rect
+                  x={x}
+                  y={bodyTop}
+                  width={barWidth}
+                  height={bodyHeight}
+                  fill={fill}
+                  rx={1}
+                />
+              </React.Fragment>
+            );
+          })}
+        {scrubX != null && scrubY != null && (
+          <Circle cx={scrubX} cy={scrubY} r={6} fill={colors.text} opacity={0.9} />
+        )}
+      </Svg>
+    </View>
+  );
+}
+
+/** Compact format: 2.5T, 150M, 1.2K */
+function formatCompact(value: string | number | null | undefined): string {
+  if (value == null || value === '') return '—';
+  const num = typeof value === 'string' ? parseFloat(value.replace(/[^0-9.eE+-]/g, '')) : Number(value);
+  if (Number.isNaN(num)) return String(value);
+  const abs = Math.abs(num);
+  if (abs >= 1e12) return `${(num / 1e12).toFixed(1)}T`;
+  if (abs >= 1e9) return `${(num / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${(num / 1e6).toFixed(0)}M`;
+  if (abs >= 1e3) return `${(num / 1e3).toFixed(1)}K`;
+  return num.toLocaleString();
+}
+
+/** Market Cap: show pre-formatted strings (e.g. "2.5T") as-is, otherwise format with T/B/M/K */
+function formatMarketCap(value: string | number | null | undefined): string {
+  if (value == null || value === '') return 'N/A';
+  const s = typeof value === 'string' ? value.trim() : String(value);
+  if (/^\d+(\.\d+)?\s*[TBMK]$/i.test(s)) return s;
+  const num = typeof value === 'number' ? value : parseFloat(s.replace(/[^0-9.eE+-]/g, ''));
+  if (!Number.isFinite(num) || num === 0) return 'N/A';
+  return formatCompact(value);
+}
 
 /** Map backend quote (snake_case) to statistics shape for display and Faheem. */
 function quoteToStats(quote: Record<string, unknown> | undefined): StatsShape | undefined {
   if (!quote || typeof quote !== 'object') return undefined;
   const q = quote as Record<string, unknown>;
+  const f52 = q.fifty_two_week && typeof q.fifty_two_week === 'object' ? (q.fifty_two_week as { high?: number; low?: number }) : null;
   return {
     currentPrice: (q.current_price ?? q.close ?? q.price) as number | undefined,
     percent_change: (q.percent_change ?? q.change_pct ?? q.change) as number | undefined,
-    fiftyTwoWeekHigh: (q.fifty_two_week_high ?? q.high_52_week) as number | undefined,
-    fiftyTwoWeekLow: (q.fifty_two_week_low ?? q.low_52_week) as number | undefined,
+    fiftyTwoWeekHigh: (q.fifty_two_week_high ?? q.high_52_week ?? f52?.high) as number | undefined,
+    fiftyTwoWeekLow: (q.fifty_two_week_low ?? q.low_52_week ?? f52?.low) as number | undefined,
     volume: (q.volume ?? q.average_volume) as string | number | undefined,
     market_cap: (q.market_cap ?? q.market_capitalization) as string | number | undefined,
     pe: (q.pe ?? q.pe_ratio) as string | number | undefined,
@@ -70,147 +289,261 @@ function quoteToStats(quote: Record<string, unknown> | undefined): StatsShape | 
   };
 }
 
-export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 'beginner' }: OverviewTabProps) {
+/** Get profile from detail (stockProfile, profile, or nested under .data). Force display data. */
+function getProfile(detail: OverviewTabProps['detail']): StockProfileOverview | undefined {
+  if (!detail || typeof detail !== 'object') return undefined;
+  const d = detail as Record<string, unknown>;
+  const p = (d.stockProfile ?? d.profile ?? (d.data as Record<string, unknown>)?.profile ?? (d.data as Record<string, unknown>)?.stockProfile) as StockProfileOverview | undefined;
+  return p;
+}
+
+/** Get quote from detail (may be nested under .data). */
+function getQuote(detail: OverviewTabProps['detail']): Record<string, unknown> | undefined {
+  if (!detail || typeof detail !== 'object') return undefined;
+  const d = detail as Record<string, unknown>;
+  return (d.quote ?? (d.data as Record<string, unknown>)?.quote) as Record<string, unknown> | undefined;
+}
+
+/** Get statistics from detail (may be nested under .data). */
+function getStatistics(detail: OverviewTabProps['detail']): StatsShape | undefined {
+  if (!detail || typeof detail !== 'object') return undefined;
+  const d = detail as Record<string, unknown>;
+  return (d.statistics ?? (d.data as Record<string, unknown>)?.statistics) as StatsShape | undefined;
+}
+
+export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 'beginner', onRefresh }: OverviewTabProps) {
   const { colors } = useTheme();
-  const statsFromApi = detail?.statistics;
-  const statsFromQuote = quoteToStats(detail?.quote as Record<string, unknown> | undefined);
-  const stats = statsFromApi && (statsFromApi.currentPrice != null || statsFromApi.volume != null)
-    ? statsFromApi
-    : statsFromQuote ?? statsFromApi;
+  const profile = getProfile(detail);
+  const quote = getQuote(detail);
+  const statsFromApi = getStatistics(detail);
+  const statsFromQuote = quoteToStats(quote);
+  const stats =
+    (statsFromApi && (statsFromApi.currentPrice != null || statsFromApi.volume != null || statsFromApi.market_cap != null))
+      ? statsFromApi
+      : (statsFromQuote ?? statsFromApi ?? undefined);
+  const profile52High = profile?.fifty_two_week_high ?? profile?.fifty_two_week?.high;
+  const profile52Low = profile?.fifty_two_week_low ?? profile?.fifty_two_week?.low;
+  const q = quote as Record<string, unknown> | undefined;
+  const volume = (q?.volume ?? stats?.volume) as string | number | undefined;
+  const fiftyTwoHigh = (q?.fifty_two_week && typeof q.fifty_two_week === 'object'
+    ? (q.fifty_two_week as { high?: number })?.high
+    : (q?.fifty_two_week_high ?? stats?.fiftyTwoWeekHigh ?? profile?.fifty_two_week_high ?? profile?.fifty_two_week?.high)) as number | undefined;
+  const fiftyTwoLow = (q?.fifty_two_week && typeof q.fifty_two_week === 'object'
+    ? (q.fifty_two_week as { low?: number })?.low
+    : (q?.fifty_two_week_low ?? stats?.fiftyTwoWeekLow ?? profile?.fifty_two_week_low ?? profile?.fifty_two_week?.low)) as number | undefined;
   const price = stats?.currentPrice ?? 0;
   const change = stats?.percent_change ?? 0;
-  const high = stats?.fiftyTwoWeekHigh ?? 0;
-  const low = stats?.fiftyTwoWeekLow ?? 0;
-  const vol = stats?.volume ?? '—';
-  const data = historical?.data ?? [];
+  const high = fiftyTwoHigh ?? profile52High ?? 0;
+  const low = fiftyTwoLow ?? profile52Low ?? 0;
+  const vol = volume ?? stats?.volume ?? '—';
+  const marketCap = (stats?.marketCap ?? stats?.market_cap ?? profile?.market_cap ?? (q?.market_cap as string | number | undefined)) as string | number | undefined;
+  const peRatio = (stats?.peRatio ?? stats?.pe ?? profile?.pe ?? (q?.pe as string | number | undefined) ?? (q?.pe_ratio as string | number | undefined)) as string | number | undefined;
+  const dividendYield = stats?.dividendYield ?? (typeof stats?.yield === 'number' ? stats.yield : null);
+  const [timeframe, setTimeframe] = useState<'1D' | '1W' | '1M' | '1Y'>('1D');
+  const [chartType, setChartType] = useState<'line' | 'candle'>('line');
+  const [chartHistorical, setChartHistorical] = useState<{ data?: Candle[] } | null>(null);
+  const [loadingTimeframe, setLoadingTimeframe] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+
+  const data = timeframe === '1D' ? (historical?.data ?? []) : (chartHistorical?.data ?? []);
+  const chartLoading = timeframe === '1D' ? loading : loadingTimeframe;
   const isPositive = change >= 0;
 
-  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [aboutExpanded, setAboutExpanded] = useState(false);
   const [faheemRationale, setFaheemRationale] = useState<string | null>(null);
   const [faheemVerdict, setFaheemVerdict] = useState<string | null>(null);
   const [faheemLoading, setFaheemLoading] = useState(false);
+  const [faheemError, setFaheemError] = useState(false);
   const { width } = Dimensions.get('window');
-  const profile = detail?.profile;
-  const companyName = (typeof profile?.name === 'string' ? profile.name : (profile?.name as { en?: string })?.en) ?? symbol;
-  const description = (typeof profile?.description === 'string' ? profile.description : (profile?.description as { en?: string })?.en) ?? '';
-  const executivesList = profile?.executives ?? profile?.officers ?? [];
+  const companyName = (typeof profile?.name === 'string' ? profile.name : (profile?.name as unknown as { en?: string })?.en) ?? symbol;
+  const description: string = (typeof profile?.description === 'string' ? profile.description : (profile?.description as unknown as { en?: string })?.en)
+    ?? (typeof (profile as Record<string, unknown>)?.longBusinessSummary === 'string' ? String((profile as Record<string, unknown>).longBusinessSummary) : '')
+    ?? '';
+  const executivesList = profile?.executives ?? profile?.officers ?? (profile as Record<string, unknown>)?.key_executives ?? (profile as Record<string, unknown>)?.management ?? [];
   const executives = Array.isArray(executivesList) ? executivesList.slice(0, 5).map((e: { name?: string; title?: string }) => ({ name: e?.name ?? '—', title: e?.title ?? '—' })) : [];
   const chartWidth = width - PADDING * 2 - 24;
-  const chartInnerHeight = CHART_HEIGHT - 24;
 
-  const quoteForFaheem = stats ? { ...stats, symbol } : undefined;
+  const quoteForFaheem = (stats ?? statsFromQuote) ? { ...(stats ?? statsFromQuote), symbol } : { symbol };
 
+  // Chart data for current timeframe (used for Faheem and display)
+  const chartData = data ?? [];
+
+  // Faheem: strict triggering — only call API when chart has >= 10 points; re-fires when chartData updates
   useEffect(() => {
-    let cancelled = false;
-    setFaheemLoading(true);
-    getFaheemOverview(symbol, faheemMode, quoteForFaheem)
-      .then((res) => {
-        if (!cancelled) {
-          setFaheemRationale(res.rationale ?? null);
-          setFaheemVerdict(res.verdict ?? null);
+    let isMounted = true;
+    let activeRequest = false;
+
+    const fetchStrictAi = async () => {
+      if (!chartData || chartData.length < 10) {
+        if (isMounted) setFaheemLoading(true);
+        return;
+      }
+
+      try {
+        if (activeRequest) return;
+        activeRequest = true;
+        if (isMounted) setFaheemLoading(true);
+
+        if (__DEV__) console.log(`🧠 Faheem: Analyzing ${chartData.length} candles for ${symbol}...`);
+
+        const quote = Object.keys(quoteForFaheem).length > 1 ? quoteForFaheem : undefined;
+        const res = await getFaheemOverview(symbol, faheemMode, quote);
+        const result = res?.rationale ?? null;
+
+        if (isMounted) {
+          setFaheemRationale(result);
+          setFaheemVerdict(res?.verdict ?? null);
+          setFaheemError(false);
+          if (result && result.length > 5 && !result.includes('Insufficient')) {
+            setAiAnalysis(result);
+          }
         }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFaheemRationale(null);
-          setFaheemVerdict(null);
+      } catch (e) {
+        if (__DEV__) console.error('AI Error:', e);
+        if (isMounted) {
+          setAiAnalysis('Analysis temporarily unavailable.');
+          setFaheemError(false);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setFaheemLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [symbol, faheemMode]);
+      } finally {
+        if (isMounted) setFaheemLoading(false);
+        activeRequest = false;
+      }
+    };
 
-  let points = '';
-  let minVal = Infinity;
-  let maxVal = -Infinity;
-  if (data.length > 1) {
-    data.forEach((d) => {
-      minVal = Math.min(minVal, d.low);
-      maxVal = Math.max(maxVal, d.high);
-    });
-    if (maxVal <= minVal) maxVal = minVal + 1;
-  }
-  const range = maxVal - minVal || 1;
-  const step = data.length > 1 ? chartWidth / Math.max(data.length - 1, 1) : 0;
-  data.forEach((d, i) => {
-    const x = PADDING + i * step;
-    const y = CHART_HEIGHT - 12 - ((d.close - minVal) / range) * chartInnerHeight;
-    points += `${x},${y} `;
-  });
+    const timer = setTimeout(fetchStrictAi, 1500);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [symbol, timeframe, chartData]);
 
-  const scrubbedPoint = scrubIndex != null && data[scrubIndex] != null
-    ? data[scrubIndex]
-    : null;
-  const scrubX = scrubIndex != null && data.length > 1
-    ? PADDING + scrubIndex * step
-    : null;
-  const scrubY = scrubbedPoint != null
-    ? CHART_HEIGHT - 12 - ((scrubbedPoint.close - minVal) / range) * chartInnerHeight
-    : null;
-
-  const onChartTouch = (evt: NativeSyntheticEvent<NativeTouchEvent>) => {
-    const touch = evt.nativeEvent.touches[0];
-    if (!touch || data.length < 2) return;
-    const x = touch.pageX - PADDING;
-    const i = Math.round((x / chartWidth) * (data.length - 1));
-    const clamped = Math.max(0, Math.min(i, data.length - 1));
-    setScrubIndex(clamped);
+  const timeframeToInterval = (tf: string) => {
+    switch (tf) {
+      case '1W': return '5day';
+      case '1M': return '1month';
+      case '1Y': return '12month';
+      default: return '1day';
+    }
   };
 
+  useEffect(() => {
+    if (timeframe === '1D') {
+      setChartHistorical(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingTimeframe(true);
+    getHistoricalData(symbol, timeframeToInterval(timeframe))
+      .then((res) => {
+        if (!cancelled) setChartHistorical(res ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setChartHistorical(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTimeframe(false);
+      });
+    return () => { cancelled = true; };
+  }, [symbol, timeframe]);
+
   const formatStat = (v: string | number | null | undefined) => {
-    if (v == null) return '—';
+    if (v == null || v === '') return 'N/A';
+    if (typeof v === 'number' && (v === 0 || !Number.isFinite(v))) return 'N/A';
     if (typeof v === 'number') return v.toLocaleString();
     return String(v);
   };
+  const formatStatCompact = (v: string | number | null | undefined) => (v != null && v !== '' && Number(v) !== 0 ? formatCompact(v) : 'N/A');
+  const formatLargeNumber = (v: string | number | null | undefined) => (v != null && v !== '' && Number(v) !== 0 ? formatCompact(v) : 'N/A');
 
   const themedStyles = makeStyles(colors);
+
+  const timeframes: Array<'1D' | '1W' | '1M' | '1Y'> = ['1D', '1W', '1M', '1Y'];
+
+  if (__DEV__) {
+    console.log(
+      'RAW PROFILE DATA',
+      JSON.stringify(
+        {
+          detail,
+          profile: profile ?? null,
+          quote: quote ?? null,
+          statistics: (detail && typeof detail === 'object' ? (detail as Record<string, unknown>).statistics : undefined),
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  if ((detail as { error?: string } | null)?.error === 'RATE_LIMIT') {
+    return (
+      <View style={themedStyles.container}>
+        <View style={themedStyles.errorContainer}>
+          <Text style={themedStyles.errorTitle}>Market Data Paused</Text>
+          <Text style={themedStyles.errorText}>We are updating too fast. Please wait 60 seconds.</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={themedStyles.container}
       contentContainerStyle={themedStyles.content}
       showsVerticalScrollIndicator={false}
-      onTouchEnd={() => setScrubIndex(null)}
-      onTouchCancel={() => setScrubIndex(null)}
+      refreshControl={onRefresh ? (
+        <RefreshControl refreshing={loading} onRefresh={onRefresh} tintColor={colors.electricBlue} />
+      ) : undefined}
     >
-      {loading && !data.length ? (
+      <View style={themedStyles.chartSection}>
+        <View style={themedStyles.chartControlsRow}>
+          <View style={themedStyles.timeframeRow}>
+            {timeframes.map((tf) => (
+              <TouchableOpacity
+                key={tf}
+                style={[
+                  themedStyles.timeframeButton,
+                  timeframe === tf && themedStyles.timeframeButtonActive,
+                ]}
+                onPress={() => setTimeframe(tf)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    themedStyles.timeframeLabel,
+                    timeframe === tf && themedStyles.timeframeLabelActive,
+                  ]}
+                >
+                  {tf}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={themedStyles.chartTypeToggle}
+            onPress={() => setChartType((t) => (t === 'line' ? 'candle' : 'line'))}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name={chartType === 'line' ? 'trending-up-outline' : 'bar-chart-outline'}
+              size={20}
+              color={colors.textTertiary}
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {chartLoading && !data.length ? (
         <View style={[themedStyles.chartPlaceholder, { width: chartWidth, height: CHART_HEIGHT }]}>
           <ActivityIndicator color={colors.electricBlue} />
         </View>
-      ) : data.length > 1 ? (
-        <View
-          style={themedStyles.chartWrap}
-          onStartShouldSetResponder={() => true}
-          onMoveShouldSetResponder={() => true}
-          onResponderGrant={onChartTouch}
-          onResponderMove={onChartTouch}
-        >
-          {scrubbedPoint != null && (
-            <View style={themedStyles.scrubLabel}>
-              <Text style={themedStyles.scrubPrice} numberOfLines={1}>
-                {scrubbedPoint.close.toFixed(2)}
-              </Text>
-            </View>
-          )}
-          <Svg width={width} height={CHART_HEIGHT}>
-            <Polyline
-              points={points.trim()}
-              fill="none"
-              stroke={isPositive ? colors.positive : colors.negative}
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            {scrubX != null && scrubY != null && (
-              <Circle cx={scrubX} cy={scrubY} r={6} fill={colors.text} opacity={0.9} />
-            )}
-          </Svg>
-        </View>
       ) : (
-        <View style={[themedStyles.chartPlaceholder, { width: chartWidth, height: CHART_HEIGHT }]}>
-          <Text style={themedStyles.placeholderText}>No chart data</Text>
+        <View style={[themedStyles.chartWrap, { height: CHART_HEIGHT + 48 }]} key={`${timeframe}-${chartType}`}>
+          <StockLineChart
+            data={data as Array<Record<string, unknown>>}
+            isPositive={isPositive}
+            type={chartType}
+          />
         </View>
       )}
 
@@ -227,14 +560,18 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
         {faheemLoading ? (
           <View style={themedStyles.faheemSkeleton}>
             <ActivityIndicator size="small" color={colors.electricBlue} />
-            <Text style={themedStyles.faheemSkeletonText}>Faheem is thinking...</Text>
+            <Text style={themedStyles.faheemSkeletonText}>Analyzing chart data...</Text>
           </View>
-        ) : faheemRationale ? (
-          <Text style={themedStyles.faheemSummary}>{faheemRationale}</Text>
-        ) : (
+        ) : faheemError ? (
           <Text style={themedStyles.faheemSummary}>
-            Open a stock to see Faheem&apos;s analysis. Ensure the backend /api/faheem/overview endpoint is enabled.
+            Faheem is temporarily unavailable. Check that the backend is running and /api/faheem/overview is enabled.
           </Text>
+        ) : (
+          <View style={themedStyles.faheemContent}>
+            <Text style={themedStyles.faheemSummary}>
+              {aiAnalysis || 'Analyzing chart data...'}
+            </Text>
+          </View>
         )}
       </View>
 
@@ -242,44 +579,44 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
       <View style={themedStyles.statsGrid}>
         <View style={themedStyles.statCell}>
           <Text style={themedStyles.statLabel}>Market Cap</Text>
-          <Text style={themedStyles.statValue}>{formatStat(stats?.market_cap)}</Text>
-        </View>
-        <View style={themedStyles.statCell}>
-          <Text style={themedStyles.statLabel}>P/E Ratio</Text>
-          <Text style={themedStyles.statValue}>{formatStat(stats?.pe)}</Text>
-        </View>
-        <View style={themedStyles.statCell}>
-          <Text style={themedStyles.statLabel}>Yield</Text>
-          <Text style={themedStyles.statValue}>{formatStat(stats?.yield)}</Text>
+          <Text style={themedStyles.statValue}>{formatMarketCap(marketCap)}</Text>
         </View>
         <View style={themedStyles.statCell}>
           <Text style={themedStyles.statLabel}>Volume</Text>
-          <Text style={themedStyles.statValue}>{formatStat(vol)}</Text>
+          <Text style={themedStyles.statValue}>{vol != null && vol !== '' ? formatLargeNumber(vol) : 'N/A'}</Text>
+        </View>
+        <View style={themedStyles.statCell}>
+          <Text style={themedStyles.statLabel}>P/E Ratio</Text>
+          <Text style={themedStyles.statValue}>{peRatio != null && peRatio !== '' && Number.isFinite(Number(peRatio)) ? Number(peRatio).toFixed(2) : '---'}</Text>
         </View>
         <View style={themedStyles.statCell}>
           <Text style={themedStyles.statLabel}>52W High</Text>
-          <Text style={themedStyles.statValue}>{high ? high.toFixed(2) : '—'}</Text>
+          <Text style={themedStyles.statValue}>{high != null && Number.isFinite(high) && high !== 0 ? Number(high).toFixed(2) : 'N/A'}</Text>
         </View>
         <View style={themedStyles.statCell}>
           <Text style={themedStyles.statLabel}>52W Low</Text>
-          <Text style={themedStyles.statValue}>{low ? low.toFixed(2) : '—'}</Text>
+          <Text style={themedStyles.statValue}>{low != null && Number.isFinite(low) && low !== 0 ? Number(low).toFixed(2) : 'N/A'}</Text>
+        </View>
+        <View style={themedStyles.statCell}>
+          <Text style={themedStyles.statLabel}>Yield</Text>
+          <Text style={themedStyles.statValue}>{dividendYield != null && Number.isFinite(Number(dividendYield)) ? (Number(dividendYield) * 100).toFixed(2) + '%' : '---'}</Text>
         </View>
         <View style={themedStyles.statCell}>
           <Text style={themedStyles.statLabel}>Open</Text>
-          <Text style={themedStyles.statValue}>{data[0] ? data[0].open.toFixed(2) : '—'}</Text>
+          <Text style={themedStyles.statValue}>{data[0] != null && Number.isFinite(data[0].open) ? Number(data[0].open).toFixed(2) : 'N/A'}</Text>
         </View>
         <View style={themedStyles.statCell}>
           <Text style={themedStyles.statLabel}>Close</Text>
-          <Text style={themedStyles.statValue}>{data.length ? data[data.length - 1].close.toFixed(2) : '—'}</Text>
+          <Text style={themedStyles.statValue}>{data.length > 0 && data[data.length - 1] != null && Number.isFinite(data[data.length - 1].close) ? Number(data[data.length - 1].close).toFixed(2) : 'N/A'}</Text>
         </View>
       </View>
 
       <Text style={[themedStyles.sectionHeader, themedStyles.aboutSectionHeader]}>About {companyName}</Text>
       <View style={themedStyles.aboutCard}>
         <Text style={themedStyles.aboutBody} numberOfLines={aboutExpanded ? undefined : 4}>
-          {description || 'No description available.'}
+          {loading ? 'Loading…' : (description || '---')}
         </Text>
-        {description.length > 120 && (
+        {(typeof description === 'string' && description.length > 120) && (
           <TouchableOpacity onPress={() => setAboutExpanded((e) => !e)} activeOpacity={0.8}>
             <Text style={themedStyles.readMore}>{aboutExpanded ? 'Read Less' : 'Read More'}</Text>
           </TouchableOpacity>
@@ -300,16 +637,16 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
 
       <Text style={[themedStyles.sectionHeader, themedStyles.executivesSectionHeader]}>Key Executives</Text>
       <View style={themedStyles.executivesCard}>
-        {executives.length > 0 ? (
-          executives.map((exec, index) => (
-            <View key={index} style={[themedStyles.executiveRow, index === executives.length - 1 && themedStyles.executiveRowLast]}>
-              <Text style={themedStyles.executiveName}>{exec.name}</Text>
-              <Text style={themedStyles.executiveTitle}>{exec.title}</Text>
-            </View>
-          ))
-        ) : (
-          <Text style={themedStyles.executivePlaceholder}>No executive data available.</Text>
-        )}
+        {executives.length > 0
+          ? executives.map((exec, index) => (
+              <View key={index} style={[themedStyles.executiveRow, index === executives.length - 1 && themedStyles.executiveRowLast]}>
+                <Text style={themedStyles.executiveName}>{exec.name}</Text>
+                <Text style={themedStyles.executiveTitle}>{exec.title}</Text>
+              </View>
+            ))
+          : (
+              <Text style={{ padding: 20, color: '#888' }}>No executive data found.</Text>
+            )}
       </View>
     </ScrollView>
   );
@@ -318,7 +655,37 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
 function makeStyles(colors: typeof COLORS) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 24,
+    },
+    errorTitle: { fontSize: 18, fontWeight: '600', color: colors.text, marginBottom: 8 },
+    errorText: { fontSize: 15, color: colors.textSecondary, textAlign: 'center' },
     content: { padding: PADDING, paddingBottom: 100 },
+    chartSection: { marginBottom: 4 },
+    chartControlsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+    },
+    timeframeRow: { flexDirection: 'row', gap: 4 },
+    timeframeButton: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 8,
+      backgroundColor: colors.card,
+    },
+    timeframeButtonActive: { backgroundColor: colors.electricBlue },
+    timeframeLabel: { fontSize: 13, fontWeight: '600', color: colors.textTertiary },
+    timeframeLabelActive: { color: '#fff' },
+    chartTypeToggle: {
+      padding: 8,
+      borderRadius: 8,
+      backgroundColor: colors.card,
+    },
     chartWrap: { marginVertical: 12, position: 'relative' },
     scrubLabel: {
       position: 'absolute',
@@ -355,6 +722,7 @@ function makeStyles(colors: typeof COLORS) {
     verdictText: { fontSize: 13, fontWeight: '600', color: colors.text },
     faheemSkeleton: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     faheemSkeletonText: { fontSize: 14, color: colors.textTertiary },
+    faheemContent: { marginTop: 0 },
     faheemSummary: { fontSize: 14, color: colors.textSecondary, lineHeight: 20 },
     sectionHeader: {
       fontSize: 20,

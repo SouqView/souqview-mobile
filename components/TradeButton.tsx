@@ -31,7 +31,9 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const confettiRef = useRef<ConfettiCannon>(null);
 
-  const price = currentPrice ?? 0;
+  const price = typeof currentPrice === 'number' && Number.isFinite(currentPrice)
+    ? currentPrice
+    : (currentPrice != null ? Number(currentPrice) : 0) || 0;
   const qty = Math.max(0, Math.floor(parseFloat(quantity) || 0));
   const total = price * qty;
   const position = getPosition(symbol);
@@ -128,7 +130,7 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
 
             <Text style={styles.availableCash}>Available Cash: $100,000</Text>
             <Text style={styles.priceLine}>
-              Price: <Text style={styles.priceValue}>{price ? price.toFixed(2) : '—'} USD</Text>
+              Price: <Text style={styles.priceValue}>{price > 0 ? price.toFixed(2) : '—'} USD</Text>
             </Text>
 
             <View style={styles.toggleRow}>

@@ -2,6 +2,7 @@
  * SouqView – Supabase client (Auth, Database, Realtime).
  * Requires EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in .env
  * Auth uses AsyncStorage so the user stays logged in when they close the app.
+ * On web SSR (Node), a no-op storage is used to avoid "window is not defined".
  */
 
 import 'react-native-url-polyfill/auto';
@@ -18,9 +19,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+/** No-op storage for SSR/Node where window is not defined (Expo web server render). */
+const noopStorage = {
+  getItem: async (_key: string): Promise<string | null> => null,
+  setItem: async (_key: string, _value: string): Promise<void> => {},
+  removeItem: async (_key: string): Promise<void> => {},
+};
+
+const isServer = typeof window === 'undefined';
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: AsyncStorage,
+    storage: isServer ? noopStorage : AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
