@@ -9,9 +9,12 @@ import axios from 'axios';
 const BASE_URL =
   process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
 
+/** 25s: stock-detail + profile + historical can be slow when backend or Twelve Data is under load. */
+const BACKEND_TIMEOUT_MS = 25000;
+
 export const backend = axios.create({
   baseURL: BASE_URL,
-  timeout: 15000,
+  timeout: BACKEND_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json' },
   withCredentials: true,
 });

@@ -11,12 +11,15 @@ import {
   Text,
   FlatList,
   StyleSheet,
-  ActivityIndicator,
   Image,
   TouchableOpacity,
+  ScrollView,
 } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
-import { COLORS } from '../../constants/theme';
+import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../../contexts/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
+import { SkeletonLoader, StockLogo } from '../../src/components';
 
 /** API returns items with title, url, image (and optionally source, published_at, etc.) */
 export type NewsItem = {
@@ -119,7 +122,7 @@ function formatSourceTime(source: string | undefined, dateStr: string | undefine
   return parts.join(' · ') || 'News';
 }
 
-function NewsCard({ item }: { item: NewsItem }) {
+function NewsCard({ item, styles, symbol }: { item: NewsItem; styles: ReturnType<typeof makeNewsStyles>; symbol?: string }) {
   const headline = item.title || 'No title';
   const source = item.source || 'News';
   const imageUri = item.image_url || item.image || undefined;
@@ -139,6 +142,11 @@ function NewsCard({ item }: { item: NewsItem }) {
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.8}>
+      {symbol ? (
+        <View style={styles.cardLogo}>
+          <StockLogo symbol={symbol} size={24} />
+        </View>
+      ) : null}
       {imageUri ? (
         <Image
           source={{ uri: imageUri }}
@@ -156,7 +164,7 @@ function NewsCard({ item }: { item: NewsItem }) {
   );
 }
 
-function FaheemSentiment({ headlines }: { headlines: string[] }) {
+function FaheemSentiment({ headlines, styles }: { headlines: string[]; styles: ReturnType<typeof makeNewsStyles> }) {
   const { bullishPct, bearishPct, keyKeyword, isPositive } = useMemo(
     () => analyzeHeadlineSentiment(headlines),
     [headlines]
@@ -185,114 +193,119 @@ function FaheemSentiment({ headlines }: { headlines: string[] }) {
   );
 }
 
+function makeNewsStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    list: { padding: 16, paddingBottom: 120 },
+    skeletonList: { padding: 16, paddingBottom: 120 },
+    sentimentSkeleton: { padding: 16, borderRadius: 12, marginBottom: 12 },
+    newsCardSkeleton: { padding: 16, borderRadius: 12, marginBottom: 12, minHeight: 88 },
+    centered: { flex: 1, justifyContent: 'center' as const, alignItems: 'center' as const, padding: 24 },
+    sub: { color: colors.textSecondary, marginTop: 12, fontSize: 15 },
+    emptyState: {
+      flex: 1,
+      justifyContent: 'center' as const,
+      alignItems: 'center' as const,
+      padding: 24,
+    },
+    emptyIcon: { marginBottom: 12 },
+    emptyText: {
+      color: colors.textSecondary,
+      textAlign: 'center' as const,
+      fontSize: 15,
+      lineHeight: 22,
+      paddingHorizontal: 24,
+    },
+    sentimentWrap: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 14,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    sentimentBar: {
+      flexDirection: 'row' as const,
+      height: 32,
+      borderRadius: 8,
+      overflow: 'hidden' as const,
+      backgroundColor: colors.background,
+    },
+    sentimentSegmentBullish: {
+      backgroundColor: colors.positive,
+      justifyContent: 'center' as const,
+      paddingHorizontal: 8,
+    },
+    sentimentSegmentBearish: {
+      backgroundColor: colors.negative,
+      justifyContent: 'center' as const,
+      paddingHorizontal: 8,
+    },
+    sentimentSegmentText: { fontSize: 12, fontWeight: '700' as const, color: colors.text },
+    sentimentSummary: { fontSize: 15, color: colors.textSecondary, marginTop: 12, lineHeight: 22 },
+    card: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      marginBottom: 12,
+      overflow: 'hidden' as const,
+      borderWidth: 1,
+      borderColor: colors.border,
+      minHeight: 88,
+    },
+    cardLogo: { paddingLeft: 12, paddingRight: 8 },
+    thumbnail: { width: 88, height: 88, borderRadius: 0, borderTopLeftRadius: 12, borderBottomLeftRadius: 12 },
+    thumbnailPlaceholder: { backgroundColor: colors.background },
+    cardRight: { flex: 1, padding: 12, justifyContent: 'space-between' as const },
+    headline: { fontSize: 16, fontWeight: '700' as const, color: colors.text, marginBottom: 4 },
+    sourceTime: { fontSize: 12, color: colors.textTertiary },
+  });
+}
+
 export function NewsTab({ symbol, news, loading }: NewsTabProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeNewsStyles(colors), [colors]);
   const list = useMemo(() => getNewsList(news), [news]);
   const headlines = useMemo(() => list.map((n) => n.title || '').filter(Boolean), [list]);
 
+  const rootBg = { flex: 1, backgroundColor: colors.background };
+
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.electricBlue} />
-        <Text style={styles.sub}>Loading news for {symbol}…</Text>
-      </View>
+      <ScrollView style={rootBg} contentContainerStyle={styles.skeletonList}>
+        <View style={[styles.sentimentSkeleton, { backgroundColor: colors.card }]}>
+          <SkeletonLoader width="100%" height={8} borderRadius={4} style={{ backgroundColor: colors.separator, marginBottom: 12 }} />
+          <SkeletonLoader width="60%" height={14} style={{ backgroundColor: colors.separator }} />
+        </View>
+        {[1, 2, 3, 4].map((i) => (
+          <View key={i} style={[styles.newsCardSkeleton, { backgroundColor: colors.card }]}>
+            <SkeletonLoader width="100%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 8 }} />
+            <SkeletonLoader width="85%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 6 }} />
+            <SkeletonLoader width={80} height={12} style={{ backgroundColor: colors.separator }} />
+          </View>
+        ))}
+      </ScrollView>
     );
   }
 
   if (!list.length) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.empty}>No headlines for this ticker yet.</Text>
+      <View style={[styles.emptyState, rootBg]}>
+        <Ionicons name="newspaper-outline" size={48} color={colors.textTertiary} style={styles.emptyIcon} />
+        <Text style={styles.emptyText}>No recent news available for this asset.</Text>
       </View>
     );
   }
 
   return (
-    <FlatList
-      data={list}
-      keyExtractor={(item, i) => item.id || item.url || `news-${i}`}
-      contentContainerStyle={styles.list}
-      ListHeaderComponent={<FaheemSentiment headlines={headlines} />}
-      renderItem={({ item }) => <NewsCard item={item} />}
-    />
+    <View style={rootBg}>
+      <FlatList
+        data={list}
+        keyExtractor={(item, i) => item.id || item.url || `news-${i}`}
+        contentContainerStyle={styles.list}
+        ListHeaderComponent={<FaheemSentiment headlines={headlines} styles={styles} />}
+        renderItem={({ item }) => <NewsCard item={item} styles={styles} symbol={symbol} />}
+      />
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  list: { padding: 16, paddingBottom: 100 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  sub: { color: COLORS.textSecondary, marginTop: 12, fontSize: 15 },
-  empty: { color: COLORS.textSecondary, textAlign: 'center', fontSize: 15 },
-
-  sentimentWrap: {
-    backgroundColor: COLORS.card,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  sentimentBar: {
-    flexDirection: 'row',
-    height: 32,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: COLORS.background,
-  },
-  sentimentSegmentBullish: {
-    backgroundColor: COLORS.positive,
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  sentimentSegmentBearish: {
-    backgroundColor: COLORS.negative,
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  sentimentSegmentText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  sentimentSummary: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
-    marginTop: 12,
-    lineHeight: 22,
-  },
-
-  card: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.card,
-    borderRadius: 12,
-    marginBottom: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    minHeight: 88,
-  },
-  thumbnail: {
-    width: 88,
-    height: 88,
-    borderRadius: 0,
-    borderTopLeftRadius: 12,
-    borderBottomLeftRadius: 12,
-  },
-  thumbnailPlaceholder: {
-    backgroundColor: COLORS.background,
-  },
-  cardRight: {
-    flex: 1,
-    padding: 12,
-    justifyContent: 'space-between',
-  },
-  headline: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.text,
-    marginBottom: 4,
-  },
-  sourceTime: {
-    fontSize: 12,
-    color: COLORS.textTertiary,
-  },
-});

@@ -1,6 +1,6 @@
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { COLORS } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 
 export type SegmentId = 'overview' | 'news' | 'financials' | 'forecast' | 'insiders';
 
@@ -18,6 +18,7 @@ interface SegmentedBarProps {
 }
 
 export function SegmentedBar({ selected, onSelect }: SegmentedBarProps) {
+  const { colors } = useTheme();
   const handlePress = (id: SegmentId) => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -37,10 +38,10 @@ export function SegmentedBar({ selected, onSelect }: SegmentedBarProps) {
           <TouchableOpacity
             key={seg.id}
             onPress={() => handlePress(seg.id)}
-            style={[styles.segment, isSelected && styles.segmentSelected]}
+            style={[styles.segment, isSelected && { backgroundColor: colors.electricBlueDim }]}
             activeOpacity={0.8}
           >
-            <Text style={[styles.segmentLabel, isSelected && styles.segmentLabelSelected]}>
+            <Text style={[styles.segmentLabel, { color: colors.textSecondary }, isSelected && { color: colors.electricBlue }]}>
               {seg.label}
             </Text>
           </TouchableOpacity>
@@ -50,7 +51,7 @@ export function SegmentedBar({ selected, onSelect }: SegmentedBarProps) {
   );
 
   return (
-    <View style={[styles.wrapper, styles.wrapperBg]}>
+    <View style={[styles.wrapper, { backgroundColor: colors.background }]}>
       <View style={styles.bar}>
         {content}
       </View>
@@ -66,9 +67,6 @@ const styles = StyleSheet.create({
     marginVertical: 8,
     minHeight: 44,
   },
-  wrapperBg: {
-    backgroundColor: 'rgba(30, 30, 30, 0.95)',
-  },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -79,22 +77,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
+    paddingRight: 20,
   },
   segment: {
     paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     borderRadius: 8,
-  },
-  segmentSelected: {
-    backgroundColor: COLORS.electricBlueDim,
+    flexShrink: 0,
   },
   segmentLabel: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '500',
-    color: COLORS.textSecondary,
-  },
-  segmentLabelSelected: {
-    color: COLORS.electricBlue,
   },
 });

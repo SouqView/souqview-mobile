@@ -18,8 +18,10 @@ import Svg, { Rect } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, TYPO } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import { useStockDetail } from '../../contexts/StockDetailContext';
 import { useExpertise } from '../../contexts/ExpertiseContext';
+import { TypewriterText } from '../../src/components';
 import { getFaheemFinancials, toFaheemMode } from '../../src/services/aiService';
 
 type CardItem = { title?: { en?: string }; value?: string | number };
@@ -160,25 +162,26 @@ function SegmentedControl({
   selected: 'annual' | 'quarterly';
   onSelect: (v: 'annual' | 'quarterly') => void;
 }) {
+  const { colors } = useTheme();
   const onPress = (v: 'annual' | 'quarterly') => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onSelect(v);
   };
   return (
-    <View style={styles.segmentedWrap}>
+    <View style={[styles.segmentedWrap, { backgroundColor: colors.card, borderColor: colors.separator }]}>
       <TouchableOpacity
-        style={[styles.segmentedBtn, selected === 'annual' && styles.segmentedBtnActive]}
+        style={[styles.segmentedBtn, selected === 'annual' && { backgroundColor: colors.electricBlueDim }]}
         onPress={() => onPress('annual')}
         activeOpacity={0.8}
       >
-        <Text style={[styles.segmentedLabel, selected === 'annual' && styles.segmentedLabelActive]}>Annual</Text>
+        <Text style={[styles.segmentedLabel, { color: colors.textSecondary }, selected === 'annual' && { color: colors.electricBlue }]}>Annual</Text>
       </TouchableOpacity>
       <TouchableOpacity
-        style={[styles.segmentedBtn, selected === 'quarterly' && styles.segmentedBtnActive]}
+        style={[styles.segmentedBtn, selected === 'quarterly' && { backgroundColor: colors.electricBlueDim }]}
         onPress={() => onPress('quarterly')}
         activeOpacity={0.8}
       >
-        <Text style={[styles.segmentedLabel, selected === 'quarterly' && styles.segmentedLabelActive]}>Quarterly</Text>
+        <Text style={[styles.segmentedLabel, { color: colors.textSecondary }, selected === 'quarterly' && { color: colors.electricBlue }]}>Quarterly</Text>
       </TouchableOpacity>
     </View>
   );
@@ -195,24 +198,25 @@ function YearSelector({
   onSelect: (index: number) => void;
   isQuarterly: boolean;
 }) {
+  const { colors } = useTheme();
   if (periods.length === 0) return null;
   return (
     <View style={styles.yearSelectorWrap}>
-      <Text style={styles.yearSelectorTitle}>{isQuarterly ? 'Fiscal Quarter' : 'Fiscal Year'}</Text>
+      <Text style={[styles.yearSelectorTitle, { color: colors.textTertiary }]}>{isQuarterly ? 'Fiscal Quarter' : 'Fiscal Year'}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.yearScroll}>
         {periods.map(({ label, index }) => {
           const selected = selectedIndex === index;
           return (
             <TouchableOpacity
               key={index}
-              style={[styles.yearPill, selected && styles.yearPillActive]}
+              style={[styles.yearPill, { backgroundColor: colors.card, borderColor: colors.separator }, selected && { backgroundColor: colors.electricBlueDim, borderColor: colors.electricBlue }]}
               onPress={() => {
                 if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 onSelect(index);
               }}
               activeOpacity={0.8}
             >
-              <Text style={[styles.yearPillLabel, selected && styles.yearPillLabelActive]}>{label}</Text>
+              <Text style={[styles.yearPillLabel, { color: colors.textSecondary }, selected && { color: colors.electricBlue }]}>{label}</Text>
             </TouchableOpacity>
           );
         })}
@@ -293,6 +297,7 @@ function AccordionSection({
   defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
+  const { colors } = useTheme();
   const [open, setOpen] = useState(defaultOpen ?? false);
   const onPress = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -300,9 +305,9 @@ function AccordionSection({
   };
   return (
     <View style={styles.accordionBlock}>
-      <TouchableOpacity style={styles.accordionHeader} onPress={onPress} activeOpacity={0.8}>
-        <Text style={styles.accordionTitle}>{title}</Text>
-        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={COLORS.textTertiary} />
+      <TouchableOpacity style={[styles.accordionHeader, { backgroundColor: colors.card, borderColor: colors.separator }]} onPress={onPress} activeOpacity={0.8}>
+        <Text style={[styles.accordionTitle, { color: colors.text }]}>{title}</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textTertiary} />
       </TouchableOpacity>
       {open ? <View style={styles.accordionBody}>{children}</View> : null}
     </View>
@@ -322,24 +327,26 @@ function RowWithSparkline({
   first?: boolean;
   valueColor?: 'green' | 'red' | null;
 }) {
+  const { colors } = useTheme();
   const valueStyle = valueColor === 'green' ? styles.dataRowValuePositive : valueColor === 'red' ? styles.dataRowValueNegative : undefined;
   return (
-    <View style={[styles.dataRow, !first && styles.dataRowBorder]}>
+    <View style={[styles.dataRow, !first && { borderTopWidth: 1, borderTopColor: colors.separator }]}>
       <View style={styles.dataRowLeft}>
-        <Text style={styles.dataRowLabel}>{label}</Text>
+        <Text style={[styles.dataRowLabel, { color: colors.text }]}>{label}</Text>
         {trendValues && trendValues.length > 0 && <SparklineBar values={trendValues} />}
       </View>
-      <Text style={[styles.dataRowValue, TYPO.tabular, valueStyle]}>{value}</Text>
+      <Text style={[styles.dataRowValue, TYPO.tabular, { color: colors.text }, valueStyle]}>{value}</Text>
     </View>
   );
 }
 
 function DataRow({ label, value, first, valueColor }: { label: string; value: string | number; first?: boolean; valueColor?: 'green' | 'red' | null }) {
+  const { colors } = useTheme();
   const valueStyle = valueColor === 'green' ? styles.dataRowValuePositive : valueColor === 'red' ? styles.dataRowValueNegative : undefined;
   return (
-    <View style={[styles.dataRow, !first && styles.dataRowBorder]}>
-      <Text style={styles.dataRowLabel}>{label}</Text>
-      <Text style={[styles.dataRowValue, TYPO.tabular, valueStyle]}>{value}</Text>
+    <View style={[styles.dataRow, !first && { borderTopWidth: 1, borderTopColor: colors.separator }]}>
+      <Text style={[styles.dataRowLabel, { color: colors.text }]}>{label}</Text>
+      <Text style={[styles.dataRowValue, TYPO.tabular, { color: colors.text }, valueStyle]}>{value}</Text>
     </View>
   );
 }
@@ -350,6 +357,7 @@ function isApiShape(raw: unknown): raw is FinancialsApiResponse {
 }
 
 export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProps) {
+  const { colors } = useTheme();
   const { loadFinancials } = useStockDetail();
   const { expertiseLevel } = useExpertise();
   const [period, setPeriod] = useState<'annual' | 'quarterly'>('annual');
@@ -400,7 +408,14 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
     setFaheemLoading(true);
     getFaheemFinancials(symbol, visibleData, toFaheemMode(expertiseLevel))
       .then((res) => {
-        if (!cancelled) setFaheemAudit(res.rationale ?? '');
+        if (!cancelled) {
+          const parts = [
+            res.health_score && `Health: ${res.health_score}`,
+            res.red_flags && `Red flags: ${res.red_flags}`,
+            res.summary,
+          ].filter(Boolean);
+          setFaheemAudit(parts.join('\n\n') || '');
+        }
       })
       .catch(() => {
         if (!cancelled) setFaheemAudit('Key ratios and liquidity look stable. No major red flags from this snapshot.');
@@ -417,17 +432,17 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
 
   if (loading && !financials) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.electricBlue} />
-        <Text style={styles.sub}>Loading financials…</Text>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.electricBlue} />
+        <Text style={[styles.sub, { color: colors.textSecondary }]}>Loading financials…</Text>
       </View>
     );
   }
 
   if (!raw || typeof raw !== 'object') {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.empty}>No financial data for {symbol}.</Text>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Text style={[styles.empty, { color: colors.textSecondary }]}>No financial data for {symbol}.</Text>
       </View>
     );
   }
@@ -514,8 +529,8 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
   const hasData = sales != null || grossProfit != null || netIncome != null || totalAssets != null || totalLiab != null || equity != null || operatingCf != null;
   if (!hasData && incArray.length === 0 && balArray.length === 0 && cashArray.length === 0) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.empty}>No financial data for {symbol}.</Text>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Text style={[styles.empty, { color: colors.textSecondary }]}>No financial data for {symbol}.</Text>
       </View>
     );
   }
@@ -523,7 +538,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
   const formatVal = (n: number | undefined) => (n != null && Number.isFinite(n) ? formatLargeNumber(n) : '—');
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
       <SegmentedControl selected={period} onSelect={setPeriod} />
       <YearSelector
         periods={periodLabels}
@@ -531,17 +546,21 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
         onSelect={setSelectedYearIndex}
         isQuarterly={isQuarterly}
       />
-      <View style={styles.faheemCard}>
-        <Text style={styles.faheemLabel}>Faheem&apos;s Audit</Text>
+      <View style={[styles.faheemCard, { backgroundColor: colors.card, borderLeftColor: colors.electricBlue }]}>
+        <Text style={[styles.faheemLabel, { color: colors.electricBlue }]}>Faheem&apos;s Audit</Text>
         {faheemLoading ? (
-          <Text style={styles.faheemText}>Faheem is reviewing the visible data…</Text>
+          <Text style={[styles.faheemText, { color: colors.text }]}>Faheem is reviewing the visible data…</Text>
         ) : (
-          <Text style={styles.faheemText}>{faheemAudit || 'No audit available for this period.'}</Text>
+          <TypewriterText
+            text={faheemAudit || 'No audit available for this period.'}
+            style={[styles.faheemText, { color: colors.text }]}
+            haptics={false}
+          />
         )}
       </View>
 
       <AccordionSection title="Income Statement" defaultOpen>
-        <View style={styles.table}>
+        <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.separator }]}>
           <RowWithSparkline first label="Revenue" value={formatVal(sales)} trendValues={revenueTrend.length > 0 ? revenueTrend : undefined} valueColor={revenueColor} />
           <DataRow label="Gross Profit" value={formatVal(grossProfit)} valueColor={grossProfitColor} />
           <RowWithSparkline label="Net Profit" value={formatVal(netIncome)} trendValues={netProfitTrend.length > 0 ? netProfitTrend : undefined} valueColor={netIncomeColor} />
@@ -550,7 +569,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
       </AccordionSection>
 
       <AccordionSection title="Income Ratios">
-        <View style={styles.table}>
+        <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.separator }]}>
           <DataRow first label="Gross Margin" value={grossMargin} />
           <DataRow label="Operating Margin" value={operatingMargin} />
           <DataRow label="Net Margin" value={netMargin} />
@@ -561,7 +580,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
       </AccordionSection>
 
       <AccordionSection title="Balance Sheet">
-        <View style={styles.table}>
+        <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.separator }]}>
           <DataRow first label="Total Assets" value={formatVal(totalAssets)} />
           <DataRow label="Liabilities" value={formatVal(totalLiab)} />
           <DataRow label="Equity" value={formatVal(equity)} />
@@ -570,7 +589,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
       </AccordionSection>
 
       <AccordionSection title="Balance Sheet Ratios">
-        <View style={styles.table}>
+        <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.separator }]}>
           <DataRow first label="Current Ratio" value={currentRat} />
           <DataRow label="Quick Ratio" value={quickRat} />
           <DataRow label="Debt-to-Equity" value={debtToEquity} />
@@ -578,7 +597,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
       </AccordionSection>
 
       <AccordionSection title="Cash Flow">
-        <View style={styles.table}>
+        <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.separator }]}>
           <DataRow first label="Operating" value={formatVal(operatingCf)} />
           <DataRow label="Investing" value={formatVal(investingCf)} />
           <DataRow label="Financing" value={formatVal(financingCf)} />
@@ -587,7 +606,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
       </AccordionSection>
 
       <AccordionSection title="Cash Flow Ratios">
-        <View style={styles.table}>
+        <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.separator }]}>
           <DataRow first label="FCF / Interest Coverage" value={fcf != null && fcf !== 0 ? formatVal(fcf) : '—'} />
         </View>
       </AccordionSection>
@@ -597,7 +616,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 100 },
+  content: { padding: 16, paddingBottom: 120 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   sub: { color: COLORS.textSecondary, marginTop: 12 },
   empty: { color: COLORS.textSecondary, textAlign: 'center' },

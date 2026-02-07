@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, useWindowDimensions, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, Dimensions } from 'react-native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { COLORS, TYPO } from '../../constants/theme';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -7,6 +7,7 @@ import { StockDetailProvider, useStockDetail } from '../../contexts/StockDetailC
 import { useExpertise } from '../../contexts/ExpertiseContext';
 import { toFaheemMode } from '../../src/services/aiService';
 import { useLivePrice } from '../../src/hooks/useLivePrice';
+import { StockLogo, MarketStatusBadge, StockHeaderAura } from '../../src/components';
 import { OverviewTab } from './OverviewTab';
 import type { OverviewTabProps } from './OverviewTab';
 
@@ -51,16 +52,34 @@ const Tab = createMaterialTopTabNavigator();
 
 const FLASH_DURATION_MS = 400;
 
+/** Extract quote timestamp (sec or ms) for stale-data check. */
+function getQuoteTimestamp(detail: unknown): number | string | undefined {
+  if (detail == null || typeof detail !== 'object') return undefined;
+  const d = detail as Record<string, unknown>;
+  const q = d.quote as Record<string, unknown> | undefined;
+  if (q?.timestamp != null) return q.timestamp as number;
+  if (q?.t != null) return q.t as number;
+  if (q?.datetime != null) return q.datetime as string;
+  if (d.timestamp != null) return d.timestamp as number;
+  return undefined;
+}
+
 function PriceHeader() {
   const { colors } = useTheme();
-  const { detail, loadingDetail, symbol } = useStockDetail();
+  const { detail, loadingDetail, symbol, initialPrice: initialPriceStr, initialChange: initialChangeStr } = useStockDetail();
   const { currentPrice: livePrice, previousPrice, percentChange: livePercentChange } = useLivePrice(symbol, 5000);
 
   const stats = detail?.statistics;
   const fallbackPrice = Number(stats?.currentPrice) || 0;
-  const fallbackChange = Number(stats?.percent_change) || 0;
-  const priceNum = livePrice !== undefined ? livePrice : fallbackPrice;
-  const changeNum = livePercentChange !== undefined ? livePercentChange : fallbackChange;
+  const fallbackChange = Number(stats?.percent_change) ?? 0;
+  const parsedInitialPrice = initialPriceStr != null && initialPriceStr !== '' && initialPriceStr !== '—'
+    ? Number(initialPriceStr)
+    : null;
+  const parsedInitialChange = initialChangeStr != null && initialChangeStr !== '' && initialChangeStr !== '—'
+    ? Number(initialChangeStr)
+    : null;
+  const priceNum = livePrice !== undefined ? livePrice : (fallbackPrice || (Number.isFinite(parsedInitialPrice) ? parsedInitialPrice : null));
+  const changeNum = livePercentChange !== undefined ? livePercentChange : (Number.isFinite(fallbackChange) ? fallbackChange : (Number.isFinite(parsedInitialChange) ? parsedInitialChange : 0));
   const isPositive = changeNum >= 0;
 
   const profile = detail?.profile as { name?: string | { en?: string }; sector?: string | { en?: string }; description?: string | { en?: string } } | undefined;
@@ -90,37 +109,52 @@ function PriceHeader() {
       colors.text,
       previousPrice !== undefined && livePrice !== undefined
         ? livePrice > previousPrice
-          ? COLORS.positive
-          : COLORS.negative
+          ? colors.positive
+          : colors.negative
         : colors.text,
       colors.text,
     ],
   });
 
-  const changeStr = priceNum ? `${isPositive ? '+' : ''}${changeNum.toFixed(2)}%` : '—';
-  const showPrice = !loadingDetail || livePrice !== undefined;
+  const changeStr = (priceNum != null && priceNum !== 0) || Number.isFinite(changeNum)
+    ? `${isPositive ? '+' : ''}${Number(changeNum).toFixed(2)}%`
+    : '—';
+  const hasOptimistic = Number.isFinite(parsedInitialPrice) || Number.isFinite(parsedInitialChange);
+  const showPrice = !loadingDetail || livePrice !== undefined || hasOptimistic;
+
+  const auraHeight = Math.max(200, Dimensions.get('window').height * 0.25);
+  const sentimentScore = 50 + Math.max(-50, Math.min(50, Number(changeNum) * 5));
 
   return (
-    <View style={[styles.header, { backgroundColor: colors.background }]}>
-      <Text style={[styles.largeTitle, { color: colors.text }]}>{nameStr || symbol}</Text>
-      {(nameStr && sectorStr) && (
-        <Text style={[styles.subtitle, { color: colors.textTertiary }]} numberOfLines={1}>{sectorStr}</Text>
-      )}
+    <View style={[styles.headerWrapper, { minHeight: auraHeight }]}>
+      <StockHeaderAura score={sentimentScore} />
+      <View style={[styles.header, { backgroundColor: 'transparent' }]} pointerEvents="box-none">
+      <View style={styles.headerRow}>
+        <StockLogo symbol={symbol} size={50} />
+        <View style={styles.headerTextWrap}>
+          <Text style={[styles.companyName, { color: colors.text }]} numberOfLines={1}>{nameStr || symbol}</Text>
+          <Text style={[styles.ticker, { color: colors.textTertiary }]} numberOfLines={1}>{sectorStr || symbol}</Text>
+        </View>
+      </View>
       <View style={styles.priceRow}>
         {!showPrice ? (
           <Text style={[styles.price, { color: colors.text }]}>—</Text>
         ) : (
           <>
             <Animated.Text style={[styles.price, { color: priceColor }]} numberOfLines={1}>
-              {priceNum ? priceNum.toFixed(2) : '—'}
+              {(priceNum != null && Number.isFinite(priceNum)) ? Number(priceNum).toFixed(2) : (initialPriceStr && initialPriceStr !== '—' ? initialPriceStr : '—')}
             </Animated.Text>
-            <View style={[styles.pill, isPositive ? styles.pillGreen : styles.pillRed]}>
+            <View style={[styles.pill, isPositive ? { backgroundColor: colors.neonMintDim } : { backgroundColor: colors.negativeDim }]}>
               <Text style={[styles.pillText, isPositive ? styles.positive : styles.negative]}>
                 {changeStr}
               </Text>
             </View>
           </>
         )}
+      </View>
+      <View style={styles.statusWrap}>
+        <MarketStatusBadge quoteTimestamp={getQuoteTimestamp(detail)} />
+      </View>
       </View>
     </View>
   );
@@ -187,6 +221,9 @@ function CommunityScreen() {
 
 export interface StockDetailViewProps {
   symbol: string;
+  /** Passed from Watchlist for optimistic UI – show immediately while detail loads. */
+  initialPrice?: string;
+  initialChange?: string;
 }
 
 function TradeButtonWrapper() {
@@ -195,21 +232,21 @@ function TradeButtonWrapper() {
   return <TradeButton symbol={symbol} currentPrice={currentPrice} />;
 }
 
-export function StockDetailView({ symbol }: StockDetailViewProps) {
-  const { width } = useWindowDimensions();
+export function StockDetailView({ symbol, initialPrice, initialChange }: StockDetailViewProps) {
   const { colors } = useTheme();
 
   return (
-    <StockDetailProvider symbol={symbol}>
+    <StockDetailProvider symbol={symbol} initialPrice={initialPrice} initialChange={initialChange}>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <PriceHeader />
         <Tab.Navigator
           screenOptions={{
             tabBarScrollEnabled: true,
             tabBarStyle: { backgroundColor: colors.background },
+            tabBarContentContainerStyle: { paddingHorizontal: 16, paddingRight: 20 },
             tabBarIndicatorStyle: { backgroundColor: colors.electricBlue },
-            tabBarLabelStyle: { fontSize: 12, fontWeight: '600', color: colors.textTertiary },
-            tabBarItemStyle: { width: width > 400 ? undefined : 72 },
+            tabBarLabelStyle: { fontSize: 14, fontWeight: '600', color: colors.textTertiary },
+            tabBarItemStyle: { minWidth: 72, paddingHorizontal: 12 },
           }}
         >
           <Tab.Screen name="Overview" component={OverviewScreen} />
@@ -228,26 +265,36 @@ export function StockDetailView({ symbol }: StockDetailViewProps) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  headerWrapper: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
   header: {
     paddingHorizontal: 20,
-    paddingTop: 8,
+    paddingTop: 12,
     paddingBottom: 20,
+    zIndex: 1,
   },
-  largeTitle: {
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerTextWrap: { marginLeft: 12, flex: 1 },
+  companyName: {
     ...TYPO.header,
     color: COLORS.text,
     letterSpacing: -0.5,
+    fontSize: 22,
   },
-  subtitle: { fontSize: 13, color: '#8E8E93', marginTop: 4 },
-  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
+  ticker: { fontSize: 13, marginTop: 2 },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14 },
+  statusWrap: { paddingTop: 6, paddingBottom: 4 },
   price: {
     ...TYPO.price,
     color: COLORS.text,
     fontVariant: ['tabular-nums'],
   },
   pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-  pillGreen: { backgroundColor: 'rgba(52, 199, 89, 0.2)' },
-  pillRed: { backgroundColor: 'rgba(255, 59, 48, 0.2)' },
   pillText: { fontSize: 15, fontWeight: '600' },
   positive: { color: COLORS.positive },
   negative: { color: COLORS.negative },

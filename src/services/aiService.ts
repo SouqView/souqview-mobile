@@ -1,7 +1,7 @@
 /**
  * SouqView – Dual-Brain API (Faheem overview, financials, technicals, chat).
  * Every function accepts mode: 'beginner' | 'advanced' and sends it in the JSON body.
- * Uses a dedicated client with 45s timeout for AI (DeepSeek/Groq can take 10–25s).
+ * All Faheem endpoints: POST, Content-Type: application/json, timeout ≥ 20s (backend can take ~18s).
  */
 
 import axios from 'axios';
@@ -9,19 +9,40 @@ import axios from 'axios';
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
 
+const FAHEEM_TIMEOUT_MS = 25000;
+
 const aiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 45000,
+  timeout: FAHEEM_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json' },
   withCredentials: true,
 });
 
+if (__DEV__) {
+  console.log('[aiService] Resolved API base:', API_BASE_URL);
+}
+
+function getRequestUrl(path: string): string {
+  const base = (aiClient.defaults.baseURL ?? '').replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  return base ? `${base}/${p}` : p;
+}
+
 async function postAi<T = unknown>(path: string, body?: object): Promise<T> {
+  const fullUrl = getRequestUrl(path);
   try {
     const { data } = await aiClient.post<T>(path, body);
     return data as T;
-  } catch (error) {
-    if (__DEV__) console.error('AI Service Timeout/Error:', error);
+  } catch (error: unknown) {
+    if (__DEV__) {
+      const err = error as { code?: string; message?: string; response?: { status?: number } };
+      console.error('[aiService] Request failed:', {
+        url: fullUrl,
+        code: err?.code ?? 'unknown',
+        message: err?.message ?? (error instanceof Error ? error.message : String(error)),
+        status: err?.response?.status ?? 'no response',
+      });
+    }
     throw error;
   }
 }
@@ -58,10 +79,16 @@ export async function getFaheemChartAnalysis(
 
     if (__DEV__) console.log(`📤 Faheem Payload: ${symbol} (${recentData.length} candles)`);
 
+    const base = aiClient.defaults.baseURL ?? '';
+    const fullUrl = base.endsWith('/') ? `${base}faheem/chart` : `${base}/faheem/chart`;
+    console.log(`🔗 CONNECTING TO: ${fullUrl}`);
+
     const data = await postAi<{ analysis?: string }>('/faheem/chart', {
       symbol,
       timeframe,
-      chartData: recentData,
+      chartData: recentData.map((d) => ({
+        close: Number((d as Record<string, unknown>).close ?? (d as Record<string, unknown>).value ?? 0),
+      })),
     });
     return data?.analysis ?? 'Analysis momentarily unavailable.';
   } catch (error) {
@@ -75,50 +102,50 @@ export const getFaheemAnalysis = getFaheemChartAnalysis;
 
 /**
  * POST /api/faheem/overview
- * Returns { rationale: string, verdict: string }. Optional quote/statistics for context.
+ * Body: { symbol, mode }. Success (200): { analysis: string } — use response.data.analysis.
  */
 export async function getFaheemOverview(
   symbol: string,
-  mode: FaheemMode,
-  quote?: Record<string, unknown>
-): Promise<{ rationale?: string; verdict?: string }> {
-  const data = await postAi<{ rationale?: string; verdict?: string }>('/faheem/overview', {
+  mode: FaheemMode
+): Promise<{ analysis?: string }> {
+  const base = aiClient.defaults.baseURL ?? '';
+  const path = 'faheem/overview';
+  const fullUrl = base.endsWith('/') ? `${base}${path}` : `${base}/${path}`;
+  if (__DEV__) console.log(`🔗 Faheem Overview → ${fullUrl}`);
+  const data = await postAi<{ analysis?: string }>('/faheem/overview', {
     symbol,
     mode,
-    ...(quote != null && Object.keys(quote).length > 0 ? { quote } : {}),
   });
   return data ?? {};
 }
 
 /**
  * POST /api/faheem/financials
+ * Body: { symbol, mode } or { symbol, mode, data }. Success: { health_score, red_flags, summary }.
  */
 export async function getFaheemFinancials(
   symbol: string,
   data: unknown,
   mode: FaheemMode
-): Promise<{ rationale?: string; verdict?: string; [k: string]: unknown }> {
-  const res = await postAi<{ rationale?: string; verdict?: string; [k: string]: unknown }>('/faheem/financials', {
-    symbol,
-    data,
-    mode,
-  });
+): Promise<{ health_score?: string; red_flags?: string; summary?: string }> {
+  const body: Record<string, unknown> = { symbol, mode };
+  if (data != null && typeof data === 'object') body.data = data;
+  const res = await postAi<{ health_score?: string; red_flags?: string; summary?: string }>('/faheem/financials', body);
   return res ?? {};
 }
 
 /**
  * POST /api/faheem/technicals
+ * Body: { symbol, mode } or { symbol, mode, data }. Success: { trend_strength, key_levels }.
  */
 export async function getFaheemTechnicals(
   symbol: string,
   data: unknown,
   mode: FaheemMode
-): Promise<{ rationale?: string; verdict?: string; [k: string]: unknown }> {
-  const res = await postAi<{ rationale?: string; verdict?: string; [k: string]: unknown }>('/faheem/technicals', {
-    symbol,
-    data,
-    mode,
-  });
+): Promise<{ trend_strength?: string; key_levels?: string }> {
+  const body: Record<string, unknown> = { symbol, mode };
+  if (data != null && typeof data === 'object') body.data = data;
+  const res = await postAi<{ trend_strength?: string; key_levels?: string }>('/faheem/technicals', body);
   return res ?? {};
 }
 
@@ -145,14 +172,14 @@ export async function sendChatMessage(
 /**
  * POST /api/faheem/forecast
  * Body: { symbol, mode, timeframe }. Timeframe: '1D' | '1W' | '1M' | '1Y'.
- * Returns { prediction?: string; rationale?: string } for that period.
+ * Success: { range_low, range_high, the_why, timeframe }.
  */
 export async function getFaheemForecast(
   symbol: string,
   mode: FaheemMode,
   timeframe: '1D' | '1W' | '1M' | '1Y'
-): Promise<{ prediction?: string; rationale?: string }> {
-  const data = await postAi<{ prediction?: string; rationale?: string }>('/faheem/forecast', {
+): Promise<{ range_low?: string | number; range_high?: string | number; the_why?: string; timeframe?: string }> {
+  const data = await postAi<{ range_low?: string | number; range_high?: string | number; the_why?: string; timeframe?: string }>('/faheem/forecast', {
     symbol,
     mode,
     timeframe,
@@ -161,20 +188,18 @@ export async function getFaheemForecast(
 }
 
 /**
- * POST /api/faheem/insiders (or equivalent)
- * Sends filtered recent transactions for AI sentiment. Returns { summary?: string } or rationale.
+ * POST /api/faheem/insiders
+ * Body: { symbol, mode } or { symbol, mode, data }. Success: { sentiment, suspicious_activity }.
  */
 export async function getFaheemInsiders(
   symbol: string,
   transactions: unknown[],
   mode: FaheemMode
-): Promise<{ summary?: string; rationale?: string }> {
+): Promise<{ sentiment?: string; suspicious_activity?: string }> {
   try {
-    const data = await postAi<{ summary?: string; rationale?: string }>('/faheem/insiders', {
-      symbol,
-      transactions,
-      mode,
-    });
+    const body: Record<string, unknown> = { symbol, mode };
+    if (Array.isArray(transactions) && transactions.length > 0) body.data = transactions;
+    const data = await postAi<{ sentiment?: string; suspicious_activity?: string }>('/faheem/insiders', body);
     return data ?? {};
   } catch {
     return {};

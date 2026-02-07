@@ -18,8 +18,10 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { COLORS, TYPO } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import { useStockDetail } from '../../contexts/StockDetailContext';
 import { useExpertise } from '../../contexts/ExpertiseContext';
+import { TypewriterText } from '../../src/components';
 import { getFaheemTechnicals, toFaheemMode } from '../../src/services/aiService';
 
 /** Backend combined response: RSI, MACD, MA, Bollinger Bands, Stochastic */
@@ -91,6 +93,7 @@ const TIMEFRAMES = [
 type SignalColor = 'green' | 'red' | 'neutral';
 
 function TimeframePills({ selected, onSelect }: { selected: string; onSelect: (id: string) => void }) {
+  const { colors } = useTheme();
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillsWrap}>
       {TIMEFRAMES.map((tf) => {
@@ -98,14 +101,14 @@ function TimeframePills({ selected, onSelect }: { selected: string; onSelect: (i
         return (
           <TouchableOpacity
             key={tf.id}
-            style={[styles.pill, isSelected && styles.pillActive]}
+            style={[styles.pill, { backgroundColor: colors.card, borderColor: colors.separator }, isSelected && { backgroundColor: colors.electricBlueDim, borderColor: colors.electricBlue }]}
             onPress={() => {
               if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               onSelect(tf.id);
             }}
             activeOpacity={0.8}
           >
-            <Text style={[styles.pillLabel, isSelected && styles.pillLabelActive]}>{tf.label}</Text>
+            <Text style={[styles.pillLabel, { color: colors.textSecondary }, isSelected && { color: colors.electricBlue }]}>{tf.label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -122,23 +125,25 @@ function SignalCard({
   value: string | number;
   color: SignalColor;
 }) {
-  const bgStyle = color === 'green' ? styles.signalCardGreen : color === 'red' ? styles.signalCardRed : styles.signalCardNeutral;
-  const textStyle = color === 'green' ? styles.signalTextGreen : color === 'red' ? styles.signalTextRed : styles.signalTextNeutral;
+  const { colors } = useTheme();
+  const bgStyle = color === 'green' ? styles.signalCardGreen : color === 'red' ? styles.signalCardRed : { backgroundColor: colors.card, borderColor: colors.separator };
+  const textStyle = color === 'green' ? styles.signalTextGreen : color === 'red' ? styles.signalTextRed : { color: colors.text };
   return (
     <View style={[styles.signalCard, bgStyle]}>
-      <Text style={styles.signalCardLabel}>{title}</Text>
+      <Text style={[styles.signalCardLabel, { color: colors.textTertiary }]}>{title}</Text>
       <Text style={[styles.signalCardValue, TYPO.tabular, textStyle]}>{value}</Text>
     </View>
   );
 }
 
 function VerdictHeader({ verdict }: { verdict: 'Strong Buy' | 'Neutral' | 'Sell' }) {
+  const { colors } = useTheme();
   const isBuy = verdict === 'Strong Buy';
   const isSell = verdict === 'Sell';
   return (
-    <View style={[styles.verdictBlock, isBuy && styles.verdictBlockBuy, isSell && styles.verdictBlockSell]}>
-      <Text style={[styles.verdictText, isBuy && styles.verdictBuy, isSell && styles.verdictSell]}>{verdict}</Text>
-      <Text style={styles.verdictHint}>Based on count of green vs red signals</Text>
+    <View style={[styles.verdictBlock, { backgroundColor: colors.card, borderColor: colors.separator }, isBuy && styles.verdictBlockBuy, isSell && styles.verdictBlockSell]}>
+      <Text style={[styles.verdictText, { color: colors.text }, isBuy && styles.verdictBuy, isSell && styles.verdictSell]}>{verdict}</Text>
+      <Text style={[styles.verdictHint, { color: colors.textTertiary }]}>Based on count of green vs red signals</Text>
     </View>
   );
 }
@@ -270,6 +275,7 @@ function computeDerived(
 }
 
 export function TechnicalsTab({ symbol, technicals, loading, historical }: TechnicalsTabProps) {
+  const { colors } = useTheme();
   const { loadTechnicals } = useStockDetail();
   const { expertiseLevel } = useExpertise();
   const [timeframe, setTimeframe] = useState('1day');
@@ -291,7 +297,13 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
     setAiLoading(true);
     getFaheemTechnicals(symbol, derived.fullDataset, toFaheemMode(expertiseLevel))
       .then((res) => {
-        if (!cancelled) setAiRationale(res.rationale ?? res.verdict ?? '');
+        if (!cancelled) {
+          const parts = [
+            res.trend_strength && `Trend: ${res.trend_strength}`,
+            res.key_levels && `Key levels: ${res.key_levels}`,
+          ].filter(Boolean);
+          setAiRationale(parts.join('\n\n') || '');
+        }
       })
       .catch(() => {
         if (!cancelled) setAiRationale('');
@@ -304,9 +316,9 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
 
   if (loading && !technicals) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.electricBlue} />
-        <Text style={styles.sub}>Loading RSI, MACD, MAs…</Text>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.electricBlue} />
+        <Text style={[styles.sub, { color: colors.textSecondary }]}>Loading RSI, MACD, MAs…</Text>
       </View>
     );
   }
@@ -314,12 +326,12 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
   const { indicators, rsiVal, macdLatest, macdVal, sma20, sma50, sma200, price, priceVsSma20, priceVsSma50, priceVsSma200, rsiColor, ma20Color, ma50Color, ma200Color, macdColor, bbDisplay, bbColor, stochDisplay, stochColor, atrDisplay, verdict } = derived;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
       <TimeframePills selected={timeframe} onSelect={setTimeframe} />
       <VerdictHeader verdict={verdict} />
 
       <View style={styles.heatmapBlock}>
-        <Text style={styles.heatmapTitle}>6 Indicators (2-column grid)</Text>
+        <Text style={[styles.heatmapTitle, { color: colors.text }]}>6 Indicators (2-column grid)</Text>
         <View style={styles.indicatorsGrid}>
           <SignalCard title="RSI (14)" value={rsiVal != null ? rsiVal.toFixed(1) : '—'} color={rsiColor} />
           <SignalCard title="MACD" value={macdVal != null ? `${macdVal} / ${macdLatest?.signal ?? '—'}` : '—'} color={macdColor} />
@@ -333,28 +345,32 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
           <SignalCard title="ATR (14)" value={atrDisplay} color="neutral" />
         </View>
         {bbDisplay && /U:/.test(bbDisplay) && (
-          <Text style={styles.bbHint}>Upper / Middle / Lower bands shown above.</Text>
+          <Text style={[styles.bbHint, { color: colors.textTertiary }]}>Upper / Middle / Lower bands shown above.</Text>
         )}
       </View>
 
       {(aiRationale || aiLoading) && (
-        <View style={styles.aiBlock}>
-          <Text style={styles.aiBlockTitle}>Faheem&apos;s Take</Text>
+        <View style={[styles.aiBlock, { backgroundColor: colors.card, borderLeftColor: colors.electricBlue }]}>
+          <Text style={[styles.aiBlockTitle, { color: colors.electricBlue }]}>Faheem&apos;s Take</Text>
           {aiLoading ? (
-            <Text style={styles.aiBlockText}>Analyzing indicators…</Text>
+            <Text style={[styles.aiBlockText, { color: colors.textSecondary }]}>Analyzing indicators…</Text>
           ) : (
-            <Text style={styles.aiBlockText}>{aiRationale}</Text>
+            <TypewriterText
+              text={aiRationale ?? ''}
+              style={[styles.aiBlockText, { color: colors.textSecondary }]}
+              haptics={false}
+            />
           )}
         </View>
       )}
 
       {indicators.length > 0 && (
         <View style={styles.listBlock}>
-          <Text style={styles.listTitle}>All technicals</Text>
+          <Text style={[styles.listTitle, { color: colors.text }]}>All technicals</Text>
           {indicators.slice(0, 14).map((ind, i) => (
-            <View key={i} style={[styles.row, i > 0 && styles.rowBorder]}>
-              <Text style={styles.rowLabel}>{ind.name ?? '—'}</Text>
-              <Text style={[styles.rowValue, ind.status === 'bullish' && styles.bullish, ind.status === 'bearish' && styles.bearish]}>
+            <View key={i} style={[styles.row, { backgroundColor: colors.card }, i > 0 && { borderTopWidth: 1, borderTopColor: colors.separator }]}>
+              <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>{ind.name ?? '—'}</Text>
+              <Text style={[styles.rowValue, { color: colors.text }, ind.status === 'bullish' && styles.bullish, ind.status === 'bearish' && styles.bearish]}>
                 {ind.value ?? '—'}
               </Text>
             </View>
@@ -367,7 +383,7 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 100 },
+  content: { padding: 16, paddingBottom: 120 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   sub: { color: COLORS.textSecondary, marginTop: 12 },
   pillsWrap: { flexDirection: 'row', gap: 8, marginBottom: 20, paddingRight: 16 },
@@ -414,7 +430,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   signalCardGreen: { backgroundColor: COLORS.neonMintDim, borderColor: COLORS.positive },
-  signalCardRed: { backgroundColor: 'rgba(255, 59, 48, 0.2)', borderColor: COLORS.negative },
+  signalCardRed: { backgroundColor: COLORS.negativeDim, borderColor: COLORS.negative },
   signalCardNeutral: { backgroundColor: COLORS.card, borderColor: COLORS.separator },
   signalCardLabel: { fontSize: 13, color: COLORS.textTertiary, marginBottom: 4 },
   signalCardValue: { fontSize: 16, fontWeight: '700' },

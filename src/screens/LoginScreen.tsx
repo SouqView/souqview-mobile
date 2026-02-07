@@ -16,9 +16,10 @@ import {
 import { useFonts, Montserrat_400Regular, Montserrat_600SemiBold } from '@expo-google-fonts/montserrat';
 import { useAuth } from '../context/AuthContext';
 import { useRouter } from 'expo-router';
-import { COLORS } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 
 export function LoginScreen() {
+  const { colors } = useTheme();
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { signInWithGoogle } = useAuth();
@@ -41,20 +42,20 @@ export function LoginScreen() {
 
   if (!fontsLoaded) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={COLORS.electricBlue} />
+          <ActivityIndicator size="large" color={colors.electricBlue} />
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title}>SouqView</Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.title, { color: colors.text }]}>SouqView</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             US markets, demo trading{'\n'}and AI insights.
           </Text>
         </View>
@@ -62,29 +63,29 @@ export function LoginScreen() {
         <View style={styles.spacer} />
 
         <TouchableOpacity
-          style={[styles.googleButton, isLoading && styles.googleButtonDisabled]}
+          style={[styles.googleButton, { backgroundColor: colors.card }, isLoading && styles.googleButtonDisabled]}
           onPress={handleSignInWithGoogle}
           disabled={isLoading}
           activeOpacity={0.85}
         >
           {isLoading ? (
-            <ActivityIndicator color="#3C4043" size="small" />
+            <ActivityIndicator color={colors.text} size="small" />
           ) : (
             <>
-              <View style={styles.googleLogo}>
+              <View style={[styles.googleLogo, { backgroundColor: colors.backgroundSecondary ?? colors.card, borderColor: colors.border }]}>
                 <Text style={styles.googleLogoText}>G</Text>
               </View>
-              <Text style={styles.googleButtonText}>Sign in with Google</Text>
+              <Text style={[styles.googleButtonText, { color: colors.text }]}>Sign in with Google</Text>
             </>
           )}
         </TouchableOpacity>
 
         {error ? (
-          <Text style={styles.error}>{error}</Text>
+          <Text style={[styles.error, { color: colors.negative }]}>{error}</Text>
         ) : null}
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>
+          <Text style={[styles.footerText, { color: colors.textTertiary }]}>
             By continuing, you agree to our Terms and Privacy Policy.
           </Text>
         </View>
@@ -96,7 +97,6 @@ export function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
   },
   centered: {
     flex: 1,
@@ -115,13 +115,11 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: 'Montserrat_600SemiBold',
     fontSize: 34,
-    color: COLORS.text,
     letterSpacing: -0.5,
   },
   subtitle: {
     fontFamily: 'Montserrat_400Regular',
     fontSize: 17,
-    color: COLORS.textSecondary,
     marginTop: 8,
     lineHeight: 24,
   },
@@ -132,7 +130,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 12,
@@ -156,9 +153,7 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 4,
-    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -171,12 +166,10 @@ const styles = StyleSheet.create({
   googleButtonText: {
     fontFamily: 'Montserrat_600SemiBold',
     fontSize: 17,
-    color: '#3C4043',
   },
   error: {
     fontFamily: 'Montserrat_400Regular',
     fontSize: 14,
-    color: COLORS.negative,
     textAlign: 'center',
     marginTop: 16,
     paddingHorizontal: 16,
@@ -188,7 +181,6 @@ const styles = StyleSheet.create({
   footerText: {
     fontFamily: 'Montserrat_400Regular',
     fontSize: 12,
-    color: COLORS.textTertiary,
     textAlign: 'center',
     lineHeight: 18,
   },

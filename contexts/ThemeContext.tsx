@@ -1,8 +1,10 @@
 /**
  * SouqView – Global Light/Dark theme. Persisted to AsyncStorage.
+ * Falls back to system theme (useColorScheme) when no stored preference.
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, LIGHT_COLORS, type ThemeColors } from '../constants/theme';
 
@@ -22,17 +24,21 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = useState<ThemeMode>('dark');
+  const systemScheme = useColorScheme();
+  const systemMode: ThemeMode = systemScheme === 'dark' ? 'dark' : 'light';
+  const [mode, setModeState] = useState<ThemeMode>(systemMode);
 
   useEffect(() => {
     let cancelled = false;
     AsyncStorage.getItem(THEME_STORAGE_KEY).then((stored) => {
       if (!cancelled && (stored === 'light' || stored === 'dark')) {
         setModeState(stored);
+      } else if (!cancelled) {
+        setModeState(systemMode);
       }
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [systemMode]);
 
   const setTheme = useCallback(async (newMode: ThemeMode) => {
     setModeState(newMode);

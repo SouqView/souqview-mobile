@@ -13,11 +13,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, MIN_TOUCH_TARGET } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import { useExpertise } from '../../contexts/ExpertiseContext';
 import { sendChatMessage, toFaheemMode } from '../../src/services/aiService';
 import type { ChatMessage } from '../../src/services/aiService';
 
 export default function FaheemScreen() {
+  const { colors } = useTheme();
   const { expertiseLevel } = useExpertise();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -47,10 +49,10 @@ export default function FaheemScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.title}>Faheem</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: colors.text }]}>Faheem</Text>
+        <Text style={[styles.subtitle, { color: colors.textTertiary }]}>
           {expertiseLevel === 'beginner' ? 'Simple explanations · Learning focus' : 'Technical analysis · Pro mode'}
         </Text>
       </View>
@@ -67,8 +69,8 @@ export default function FaheemScreen() {
         >
           {messages.length === 0 && (
             <View style={styles.empty}>
-              <Ionicons name="chatbubbles-outline" size={48} color={COLORS.textTertiary} />
-              <Text style={styles.emptyText}>
+              <Ionicons name="chatbubbles-outline" size={48} color={colors.textTertiary} />
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 Ask Faheem about markets, stocks, or your portfolio. Your Knowledge Level in Settings changes how he explains.
               </Text>
             </View>
@@ -78,8 +80,8 @@ export default function FaheemScreen() {
               key={i}
               style={m.role === 'user' ? styles.bubbleUserWrap : styles.bubbleAssistantWrap}
             >
-              <View style={[styles.bubble, m.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant]}>
-                <Text style={m.role === 'user' ? styles.bubbleTextUser : styles.bubbleTextAssistant}>
+              <View style={[styles.bubble, m.role === 'user' ? styles.bubbleUser : [styles.bubbleAssistant, { backgroundColor: colors.card, borderColor: colors.border }]]}>
+                <Text style={m.role === 'user' ? styles.bubbleTextUser : [styles.bubbleTextAssistant, { color: colors.text }]}>
                   {m.content}
                 </Text>
               </View>
@@ -87,21 +89,21 @@ export default function FaheemScreen() {
           ))}
           {sending && (
             <View style={styles.bubbleAssistantWrap}>
-              <View style={styles.bubbleAssistant}>
-                <ActivityIndicator size="small" color={COLORS.textTertiary} />
-                <Text style={styles.bubbleTextAssistant}>Thinking…</Text>
+              <View style={[styles.bubbleAssistant, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <ActivityIndicator size="small" color={colors.textTertiary} />
+                <Text style={[styles.bubbleTextAssistant, { color: colors.text }]}>Thinking…</Text>
               </View>
             </View>
           )}
         </ScrollView>
 
-        <View style={styles.inputRow}>
+        <View style={[styles.inputRow, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
             value={input}
             onChangeText={setInput}
             placeholder="Ask Faheem anything..."
-            placeholderTextColor={COLORS.textTertiary}
+            placeholderTextColor={colors.textTertiary}
             multiline
             maxLength={1000}
             editable={!sending}
@@ -110,7 +112,7 @@ export default function FaheemScreen() {
             blurOnSubmit={false}
           />
           <TouchableOpacity
-            style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
+            style={[styles.sendBtn, { backgroundColor: colors.electricBlue }, (!input.trim() || sending) && styles.sendBtnDisabled]}
             onPress={handleSend}
             disabled={!input.trim() || sending}
           >
@@ -123,10 +125,10 @@ export default function FaheemScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
+  container: { flex: 1 },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  title: { fontSize: 28, fontWeight: '700', color: COLORS.text },
-  subtitle: { fontSize: 13, color: COLORS.textTertiary, marginTop: 4 },
+  title: { fontSize: 28, fontWeight: '700' },
+  subtitle: { fontSize: 13, marginTop: 4 },
   chatWrap: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 120 },
@@ -137,7 +139,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 15,
-    color: COLORS.textSecondary,
     textAlign: 'center',
     marginTop: 16,
     lineHeight: 22,
@@ -161,33 +162,27 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4,
   },
   bubbleTextUser: { fontSize: 15, color: '#fff' },
-  bubbleTextAssistant: { fontSize: 15, color: COLORS.text, lineHeight: 22 },
+  bubbleTextAssistant: { fontSize: 15, lineHeight: 22 },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    backgroundColor: COLORS.background,
   },
   input: {
     flex: 1,
-    backgroundColor: COLORS.card,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
-    color: COLORS.text,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   sendBtn: {
     width: MIN_TOUCH_TARGET,
     height: MIN_TOUCH_TARGET,
     borderRadius: MIN_TOUCH_TARGET / 2,
-    backgroundColor: COLORS.electricBlue,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,

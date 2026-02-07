@@ -14,7 +14,9 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { COLORS, TYPO } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import { useExpertise } from '../../contexts/ExpertiseContext';
+import { TypewriterText } from '../../src/components';
 import { getFaheemInsiders, toFaheemMode } from '../../src/services/aiService';
 
 const ROWS_PER_PAGE = 5;
@@ -31,12 +33,24 @@ export type InsiderTx = {
   transaction_type?: string;
   shares?: number;
   value?: number | string;
+  totalValue?: number | string;
+  total_value?: number | string;
+  transaction_value?: number | string;
   price?: number | string;
+  price_per_share?: number | string;
+  transaction_price?: number | string;
   date?: string;
   filing_date?: string;
   transaction_date?: string;
+  transactionDate?: string;
+  filingDate?: string;
   reported_date?: string;
   report_date?: string;
+  reportDate?: string;
+  reportedDate?: string;
+  acquisition_date?: string;
+  disposal_date?: string;
+  reporting_date?: string;
 };
 
 /** API response shape: { insider_transactions: InsiderTx[] } */
@@ -58,42 +72,64 @@ function getInsidersList(insiders: InsidersApiResponse | null): InsiderTx[] {
 function formatValue(value: number | string | undefined): string {
   if (value === undefined || value === null) return '—';
   const num = typeof value === 'string' ? parseFloat(value.replace(/[$,]/g, '')) : Number(value);
-  if (Number.isNaN(num)) return '—';
+  if (Number.isNaN(num) || num <= 0) return '—';
   if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
   if (num >= 1_000) return `$${(num / 1_000).toFixed(1)}K`;
   return `$${num.toLocaleString()}`;
 }
 
-/** Value = shares * price when available; else use value field */
+function parseNum(x: number | string | undefined): number {
+  if (x === undefined || x === null) return 0;
+  const n = typeof x === 'number' ? x : parseFloat(String(x).replace(/[$,]/g, ''));
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/** Value = totalValue / value / total_value / transaction_value, or shares * price when available */
 function getTransactionValue(tx: InsiderTx): number {
-  const explicit = typeof tx.value === 'number' ? tx.value : parseFloat(String(tx.value || '0').replace(/[$,]/g, ''));
-  if (!Number.isNaN(explicit) && explicit > 0) return explicit;
-  const shares = Number(tx.shares) || 0;
-  const price = typeof tx.price === 'number' ? tx.price : parseFloat(String(tx.price || '0').replace(/[$,]/g, ''));
-  if (shares > 0 && !Number.isNaN(price) && price > 0) return shares * price;
+  const explicit =
+    parseNum(tx.value) ||
+    parseNum((tx as Record<string, unknown>).totalValue) ||
+    parseNum((tx as Record<string, unknown>).total_value) ||
+    parseNum((tx as Record<string, unknown>).transaction_value);
+  if (explicit > 0) return explicit;
+  const shares = parseNum(tx.shares);
+  const price =
+    parseNum(tx.price) ||
+    parseNum((tx as Record<string, unknown>).price_per_share) ||
+    parseNum((tx as Record<string, unknown>).transaction_price);
+  if (shares > 0 && price > 0) return shares * price;
   return 0;
 }
 
-/** API sends transaction_type e.g. "Sale", "Buy", "Purchase", "P", "S". Default to SELL only when ambiguous. */
+/** API sends transaction_type e.g. "Sale", "Buy", "Purchase", "P", "S". Prefer BUY when ambiguous (e.g. "A" = acquisition). */
 function normalizeAction(transactionType: string | undefined, action?: string): 'BUY' | 'SELL' {
-  const raw = (transactionType || action || '').trim();
+  const raw = (transactionType ?? action ?? '').trim();
+  if (!raw) return 'SELL';
   const t = raw.toLowerCase();
   if (t === 'sale' || t === 'sell' || t === 's' || t === 'disposition' || t === 'disposal') return 'SELL';
-  if (t === 'buy' || t === 'purchase' || t === 'p' || t === 'acquired' || t === 'acquisition' || t === 'option exercise' || t === 'option_exercise') return 'BUY';
+  if (
+    t === 'buy' || t === 'purchase' || t === 'p' || t === 'acquired' || t === 'acquisition' ||
+    t === 'option exercise' || t === 'option_exercise' || t === 'exercise' || t === 'gift (receipt)' ||
+    t === 'a' || t.startsWith('buy') || t.startsWith('purchase') || t.startsWith('acquire')
+  ) return 'BUY';
   const u = raw.toUpperCase();
-  if (u === 'P' || u === 'B' || u.startsWith('P') || u.startsWith('B') || u === 'A') return 'BUY';
-  if (u === 'S' || u.startsWith('S') || u === 'D') return 'SELL';
+  if (u === 'P' || u === 'B' || u === 'A' || u.startsWith('P') || u.startsWith('B') || u.startsWith('A')) return 'BUY';
+  if (u === 'S' || u === 'D' || u.startsWith('S') || u.startsWith('D')) return 'SELL';
   return 'SELL';
 }
 
-/** Date for display: prefer transaction_date (API), then report_date, etc. */
+/** Date for display: prefer transaction_date / transactionDate (API), then filing_date, report_date, etc. */
 function getDateStr(tx: InsiderTx): string | undefined {
   const t = tx as Record<string, unknown>;
   return (
     tx.transaction_date ??
-    tx.report_date ??
-    tx.reported_date ??
+    tx.transactionDate ??
     tx.filing_date ??
+    tx.filingDate ??
+    tx.report_date ??
+    tx.reportDate ??
+    tx.reported_date ??
+    tx.reportedDate ??
     tx.date ??
     (t.acquisition_date as string) ??
     (t.disposal_date as string) ??
@@ -101,15 +137,14 @@ function getDateStr(tx: InsiderTx): string | undefined {
   );
 }
 
-/** Format as YYYY-MM-DD for table display */
-function formatDateYYYYMMDD(dateStr: string | undefined): string {
+const MMM = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+/** Format as MMM DD (e.g. "Feb 12") for table display */
+function formatDateMMMDD(dateStr: string | undefined): string {
   if (!dateStr) return '—';
   const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return '—';
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  if (Number.isNaN(date.getTime())) return '—';
+  return `${MMM[date.getMonth()]} ${date.getDate()}`;
 }
 
 function FaheemInsidersSummary({
@@ -123,21 +158,27 @@ function FaheemInsidersSummary({
   summary: string;
   loading: boolean;
 }) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.summaryBlock}>
-      <Text style={styles.summaryLabel}>Faheem&apos;s Summary</Text>
+    <View style={[styles.summaryBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[styles.summaryLabel, { color: colors.textTertiary }]}>Faheem&apos;s Summary</Text>
       {loading ? (
-        <Text style={styles.summaryText}>Analyzing recent transactions…</Text>
+        <Text style={[styles.summaryText, { color: colors.text }]}>Analyzing recent transactions…</Text>
       ) : (
-        <Text style={styles.summaryText}>{summary || 'No summary available.'}</Text>
+        <TypewriterText
+          text={summary || 'No summary available.'}
+          style={[styles.summaryText, { color: colors.text }]}
+          haptics={false}
+        />
       )}
     </View>
   );
 }
 
 function ActionPill({ action }: { action: 'BUY' | 'SELL' }) {
+  const { colors } = useTheme();
   return (
-    <View style={[styles.pill, action === 'BUY' ? styles.pillBuy : styles.pillSell]}>
+    <View style={[styles.pill, action === 'BUY' ? { backgroundColor: colors.neonMintDim } : { backgroundColor: colors.negativeDim }]}>
       <Text style={[styles.pillText, action === 'BUY' ? styles.pillTextBuy : styles.pillTextSell]}>
         {action}
       </Text>
@@ -146,12 +187,13 @@ function ActionPill({ action }: { action: 'BUY' | 'SELL' }) {
 }
 
 function TableHeader() {
+  const { colors } = useTheme();
   return (
-    <View style={styles.tableHeader}>
-      <Text style={[styles.th, styles.thWho]}>Who</Text>
-      <Text style={[styles.th, styles.thDate]}>Date</Text>
-      <Text style={[styles.th, styles.thAction]}>Action</Text>
-      <Text style={[styles.th, styles.thValue]}>Value</Text>
+    <View style={[styles.tableHeader, { borderBottomColor: colors.separator, backgroundColor: colors.background }]}>
+      <Text style={[styles.th, styles.thWho, { color: colors.textTertiary }]}>Who</Text>
+      <Text style={[styles.th, styles.thDate, { color: colors.textTertiary }]}>Date</Text>
+      <Text style={[styles.th, styles.thAction, { color: colors.textTertiary }]}>Action</Text>
+      <Text style={[styles.th, styles.thValue, { color: colors.textTertiary }]}>Value</Text>
     </View>
   );
 }
@@ -164,6 +206,7 @@ function formatShares(shares: number | string | undefined): string {
 }
 
 function TransactionRow({ item }: { item: InsiderTx }) {
+  const { colors } = useTheme();
   const name = item.full_name ?? item.name ?? item.insiderName ?? item.insider_name ?? '—';
   const role = item.role ?? item.position ?? '—';
   const who = role ? `${name}, ${role}` : name;
@@ -171,22 +214,25 @@ function TransactionRow({ item }: { item: InsiderTx }) {
   const value = getTransactionValue(item);
   const sharesStr = formatShares(item.shares);
 
+  const valueStr = value > 0 ? formatValue(value) : '—';
+
   return (
-    <View style={styles.tableRow}>
-      <Text style={[styles.td, styles.tdWho]} numberOfLines={1}>{who}</Text>
-      <Text style={[styles.td, styles.tdDate]}>{formatDateYYYYMMDD(getDateStr(item))}</Text>
+    <View style={[styles.tableRow, { borderBottomColor: colors.border }]}>
+      <Text style={[styles.td, styles.tdWho, { color: colors.text }]} numberOfLines={1}>{who}</Text>
+      <Text style={[styles.td, styles.tdDate, { color: colors.textSecondary }]}>{formatDateMMMDD(getDateStr(item))}</Text>
       <View style={styles.tdAction}>
         <ActionPill action={action} />
       </View>
       <View style={styles.tdValueWrap}>
-        <Text style={[styles.td, styles.tdValue]}>{formatValue(value)}</Text>
-        {sharesStr !== '—' && <Text style={styles.tdShares}>{sharesStr} sh</Text>}
+        <Text style={[styles.td, styles.tdValue, { color: colors.text }]}>{valueStr}</Text>
+        {sharesStr !== '—' && <Text style={[styles.tdShares, { color: colors.textTertiary }]}>{sharesStr} sh</Text>}
       </View>
     </View>
   );
 }
 
 export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
+  const { colors } = useTheme();
   const { expertiseLevel } = useExpertise();
   const list = getInsidersList(insiders);
   const [currentPage, setCurrentPage] = useState(0);
@@ -208,7 +254,13 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
     setFaheemLoading(true);
     getFaheemInsiders(symbol, pageRows, toFaheemMode(expertiseLevel))
       .then((res) => {
-        if (!cancelled) setFaheemSummary(res.summary ?? res.rationale ?? '');
+        if (!cancelled) {
+          const parts = [
+            res.sentiment && `Sentiment: ${res.sentiment}`,
+            res.suspicious_activity && `Suspicious activity: ${res.suspicious_activity}`,
+          ].filter(Boolean);
+          setFaheemSummary(parts.join('\n\n') || '');
+        }
       })
       .catch(() => {
         if (!cancelled) setFaheemSummary('Unable to load AI summary.');
@@ -221,29 +273,29 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.electricBlue} />
-        <Text style={styles.sub}>Loading insiders…</Text>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.electricBlue} />
+        <Text style={[styles.sub, { color: colors.textSecondary }]}>Loading insiders…</Text>
       </View>
     );
   }
 
   if (list.length === 0) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.empty}>No recent insider data for {symbol}.</Text>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Text style={[styles.empty, { color: colors.textSecondary }]}>No recent insider data for {symbol}.</Text>
       </View>
     );
   }
 
   return (
     <ScrollView
-      style={styles.scroll}
+      style={[styles.scroll, { backgroundColor: colors.background }]}
       contentContainerStyle={styles.list}
       showsVerticalScrollIndicator={false}
     >
       <FaheemInsidersSummary symbol={symbol} list={pageRows} summary={faheemSummary} loading={faheemLoading} />
-      <View style={styles.table}>
+      <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <TableHeader />
         {pageRows.map((item, i) => (
           <TransactionRow key={`${item.full_name ?? item.name ?? item.insiderName ?? start + i}-${getDateStr(item) ?? i}`} item={item} />
@@ -252,27 +304,27 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
       {totalPages > 1 && (
         <View style={styles.pagination}>
           <TouchableOpacity
-            style={[styles.pageBtn, pageIndex <= 0 && styles.pageBtnDisabled]}
+            style={[styles.pageBtn, { backgroundColor: colors.electricBlueDim, borderColor: colors.electricBlue }, pageIndex <= 0 && styles.pageBtnDisabled]}
             onPress={() => {
               if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               setCurrentPage((p) => Math.max(0, p - 1));
             }}
             disabled={pageIndex <= 0}
           >
-            <Text style={styles.pageBtnText}>Prev</Text>
+            <Text style={[styles.pageBtnText, { color: colors.electricBlue }]}>Prev</Text>
           </TouchableOpacity>
-          <Text style={styles.pageIndicator}>
+          <Text style={[styles.pageIndicator, { color: colors.textTertiary }]}>
             Page {pageIndex + 1} of {totalPages}
           </Text>
           <TouchableOpacity
-            style={[styles.pageBtn, pageIndex >= totalPages - 1 && styles.pageBtnDisabled]}
+            style={[styles.pageBtn, { backgroundColor: colors.electricBlueDim, borderColor: colors.electricBlue }, pageIndex >= totalPages - 1 && styles.pageBtnDisabled]}
             onPress={() => {
               if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               setCurrentPage((p) => Math.min(totalPages - 1, p + 1));
             }}
             disabled={pageIndex >= totalPages - 1}
           >
-            <Text style={styles.pageBtnText}>Next</Text>
+            <Text style={[styles.pageBtnText, { color: colors.electricBlue }]}>Next</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -282,7 +334,7 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1 },
-  list: { padding: 16, paddingBottom: 100 },
+  list: { padding: 16, paddingBottom: 120 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   sub: { color: COLORS.textSecondary, marginTop: 12, fontSize: 15 },
   empty: { color: COLORS.textSecondary, textAlign: 'center', fontSize: 15 },
@@ -367,7 +419,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   pillBuy: { backgroundColor: COLORS.neonMintDim },
-  pillSell: { backgroundColor: 'rgba(255, 59, 48, 0.2)' },
+  pillSell: { backgroundColor: COLORS.negativeDim },
   pillText: { fontSize: 11, fontWeight: '700' },
   pillTextBuy: { color: COLORS.positive },
   pillTextSell: { color: COLORS.negative },

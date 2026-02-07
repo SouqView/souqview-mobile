@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, MIN_TOUCH_TARGET, TYPO } from '../../constants/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import { useStockComments } from '../../hooks/useStockComments';
 import { useStockVote } from '../../hooks/useStockVote';
 import type { CommentRow, CommentSentiment } from '../../services/commentsService';
@@ -41,32 +42,33 @@ function TugOfWarBar({
   onVoteBearish: () => void;
   loading: boolean;
 }) {
+  const { colors } = useTheme();
   return (
     <View style={tugStyles.wrap}>
       <View style={tugStyles.barLabels}>
         <Text style={tugStyles.bullLabel}>🐂 Bulls {bullPct}%</Text>
         <Text style={tugStyles.bearLabel}>🐻 Bears {bearPct}%</Text>
       </View>
-      <View style={tugStyles.track}>
+      <View style={[tugStyles.track, { backgroundColor: colors.card }]}>
         <View style={[tugStyles.fillLeft, { width: `${bullPct}%` }]} />
         <View style={[tugStyles.fillRight, { width: `${bearPct}%` }]} />
       </View>
       <View style={tugStyles.buttons}>
         <TouchableOpacity
-          style={[tugStyles.voteBtn, tugStyles.voteBull, myVote === 'bullish' && tugStyles.voteBtnActive]}
+          style={[tugStyles.voteBtn, { borderColor: colors.positive, backgroundColor: colors.card }, myVote === 'bullish' && tugStyles.voteBtnActive]}
           onPress={onVoteBullish}
           disabled={loading}
         >
-          <Text style={[tugStyles.voteBtnText, myVote === 'bullish' && tugStyles.voteBtnTextActive]}>
+          <Text style={[tugStyles.voteBtnText, { color: colors.textSecondary }, myVote === 'bullish' && tugStyles.voteBtnTextActive]}>
             Vote Bullish
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[tugStyles.voteBtn, tugStyles.voteBear, myVote === 'bearish' && tugStyles.voteBtnActiveBear]}
+          style={[tugStyles.voteBtn, { borderColor: colors.negative, backgroundColor: colors.card }, myVote === 'bearish' && tugStyles.voteBtnActiveBear]}
           onPress={onVoteBearish}
           disabled={loading}
         >
-          <Text style={[tugStyles.voteBtnText, myVote === 'bearish' && tugStyles.voteBtnTextActiveBear]}>
+          <Text style={[tugStyles.voteBtnText, { color: colors.textSecondary }, myVote === 'bearish' && tugStyles.voteBtnTextActiveBear]}>
             Vote Bearish
           </Text>
         </TouchableOpacity>
@@ -89,7 +91,6 @@ const tugStyles = StyleSheet.create({
     borderRadius: 7,
     flexDirection: 'row',
     overflow: 'hidden',
-    backgroundColor: COLORS.card,
   },
   fillLeft: {
     backgroundColor: COLORS.positive,
@@ -110,11 +111,11 @@ const tugStyles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
   },
-  voteBull: { borderColor: COLORS.positive, backgroundColor: COLORS.card },
-  voteBear: { borderColor: COLORS.negative, backgroundColor: COLORS.card },
+  voteBull: {},
+  voteBear: {},
   voteBtnActive: { backgroundColor: COLORS.neonMintDim },
-  voteBtnActiveBear: { backgroundColor: 'rgba(255, 59, 48, 0.2)' },
-  voteBtnText: { fontSize: 16, fontWeight: '700', color: COLORS.textSecondary },
+  voteBtnActiveBear: { backgroundColor: COLORS.negativeDim },
+  voteBtnText: { fontSize: 16, fontWeight: '700' },
   voteBtnTextActive: { color: COLORS.positive },
   voteBtnTextActiveBear: { color: COLORS.negative },
 });
@@ -125,13 +126,16 @@ function CommentCard({
   onUpvote,
   onDownvote,
   onReport,
+  iconOnBadgeColor,
 }: {
   comment: CommentRow;
   onReply: (id: string) => void;
   onUpvote: (id: string) => void;
   onDownvote: (id: string) => void;
   onReport: (id: string) => void;
+  iconOnBadgeColor: string;
 }) {
+  const { colors } = useTheme();
   const [showActions, setShowActions] = useState(false);
   const author = comment.user_id
     ? `User ${comment.user_id.slice(0, 8)}`
@@ -157,21 +161,21 @@ function CommentCard({
   };
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
       <View style={styles.cardHeader}>
-        <Text style={styles.author}>{author}</Text>
+        <Text style={[styles.author, { color: colors.text }]}>{author}</Text>
         <View style={[styles.sentimentBadge, comment.sentiment === 'bullish' ? styles.bullishBadge : styles.bearishBadge]}>
           <Ionicons
             name={comment.sentiment === 'bullish' ? 'trending-up' : 'trending-down'}
             size={12}
-            color="#fff"
+            color={iconOnBadgeColor}
           />
-          <Text style={styles.sentimentText}>
+          <Text style={[styles.sentimentText, { color: colors.text }]}>
             {comment.sentiment === 'bullish' ? 'Bullish' : 'Bearish'}
           </Text>
         </View>
       </View>
-      <Text style={styles.body}>{comment.text}</Text>
+      <Text style={[styles.body, { color: colors.textSecondary }]}>{comment.text}</Text>
       <View style={styles.actionsRow}>
         <TouchableOpacity
           style={styles.actionBtn}
@@ -181,8 +185,8 @@ function CommentCard({
           }}
           hitSlop={8}
         >
-          <Ionicons name="chatbubble-outline" size={18} color={COLORS.textTertiary} />
-          <Text style={styles.actionLabel}>Reply</Text>
+          <Ionicons name="chatbubble-outline" size={18} color={colors.textTertiary} />
+          <Text style={[styles.actionLabel, { color: colors.textTertiary }]}>Reply</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.actionBtn}
@@ -192,8 +196,8 @@ function CommentCard({
           }}
           hitSlop={8}
         >
-          <Ionicons name="arrow-up-circle-outline" size={18} color={COLORS.textTertiary} />
-          <Text style={[styles.actionLabel, styles.tabular]}>{upvotes}</Text>
+          <Ionicons name="arrow-up-circle-outline" size={18} color={colors.textTertiary} />
+          <Text style={[styles.actionLabel, styles.tabular, { color: colors.textTertiary }]}>{upvotes}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.actionBtn}
@@ -203,24 +207,24 @@ function CommentCard({
           }}
           hitSlop={8}
         >
-          <Ionicons name="arrow-down-circle-outline" size={18} color={COLORS.textTertiary} />
-          <Text style={[styles.actionLabel, styles.tabular]}>{downvotes}</Text>
+          <Ionicons name="arrow-down-circle-outline" size={18} color={colors.textTertiary} />
+          <Text style={[styles.actionLabel, styles.tabular, { color: colors.textTertiary }]}>{downvotes}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.actionBtn}
           onPress={() => setShowActions(!showActions)}
           hitSlop={8}
         >
-          <Ionicons name="ellipsis-horizontal" size={18} color={COLORS.textTertiary} />
+          <Ionicons name="ellipsis-horizontal" size={18} color={colors.textTertiary} />
         </TouchableOpacity>
       </View>
       {showActions && (
         <TouchableOpacity style={styles.reportBtn} onPress={handleReport}>
-          <Ionicons name="flag-outline" size={16} color={COLORS.negative} />
-          <Text style={styles.reportLabel}>Report</Text>
+          <Ionicons name="flag-outline" size={16} color={colors.negative} />
+          <Text style={[styles.reportLabel, { color: colors.negative }]}>Report</Text>
         </TouchableOpacity>
       )}
-      <Text style={styles.time}>
+      <Text style={[styles.time, { color: colors.textTertiary }]}>
         {new Date(comment.created_at).toLocaleDateString(undefined, {
           month: 'short',
           day: 'numeric',
@@ -233,6 +237,7 @@ function CommentCard({
 }
 
 export function CommunityTab({ symbol }: CommunityTabProps) {
+  const { colors } = useTheme();
   const { comments, loading, posting, addComment, upvote, downvote, report } = useStockComments(symbol);
   const { bullPct, bearPct, myVote, setVote, loading: voteLoading } = useStockVote(symbol);
   const [inputText, setInputText] = useState('');
@@ -250,9 +255,9 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
     >
       <ScrollView
         style={styles.scroll}
@@ -260,7 +265,7 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.header}>Community — {symbol}</Text>
+        <Text style={[styles.header, { color: colors.text }]}>Community — {symbol}</Text>
 
         <TugOfWarBar
           bullPct={bullPct}
@@ -273,11 +278,11 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
 
         {loading ? (
           <View style={styles.loadingWrap}>
-            <ActivityIndicator color={COLORS.electricBlue} />
-            <Text style={styles.loadingText}>Loading feed…</Text>
+            <ActivityIndicator color={colors.electricBlue} />
+            <Text style={[styles.loadingText, { color: colors.textTertiary }]}>Loading feed…</Text>
           </View>
         ) : comments.length === 0 ? (
-          <Text style={styles.empty}>No posts yet. Say something!</Text>
+          <Text style={[styles.empty, { color: colors.textSecondary }]}>No posts yet. Say something!</Text>
         ) : (
           comments.map((c) => (
             <View key={c.id}>
@@ -287,6 +292,7 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
                 onUpvote={upvote}
                 onDownvote={downvote}
                 onReport={report}
+                iconOnBadgeColor={colors.text}
               />
               {(c.replies ?? []).map((r) => (
                 <View key={r.id} style={styles.replyWrap}>
@@ -296,6 +302,7 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
                     onUpvote={upvote}
                     onDownvote={downvote}
                     onReport={report}
+                    iconOnBadgeColor={colors.text}
                   />
                 </View>
               ))}
@@ -305,47 +312,47 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      <SafeAreaView style={styles.inputSafe} edges={['bottom']}>
+      <SafeAreaView style={[styles.inputSafe, { backgroundColor: colors.background, borderTopColor: colors.border }]} edges={['bottom']}>
         {replyingTo && (
           <View style={styles.replyingBar}>
-            <Text style={styles.replyingText}>Replying to comment</Text>
+            <Text style={[styles.replyingText, { color: colors.textTertiary }]}>Replying to comment</Text>
             <TouchableOpacity onPress={() => setReplyingTo(null)} hitSlop={12}>
-              <Ionicons name="close" size={20} color={COLORS.textTertiary} />
+              <Ionicons name="close" size={20} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>
         )}
         <View style={styles.inputRow}>
           <View style={styles.toggleRow}>
             <TouchableOpacity
-              style={[styles.toggleBtn, sentiment === 'bullish' && styles.toggleBtnBull]}
+              style={[styles.toggleBtn, { backgroundColor: colors.card, borderColor: colors.border }, sentiment === 'bullish' && styles.toggleBtnBull]}
               onPress={() => {
                 if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setSentiment('bullish');
               }}
             >
-              <Text style={[styles.toggleText, sentiment === 'bullish' && styles.toggleTextBull]}>
+              <Text style={[styles.toggleText, { color: colors.textSecondary }, sentiment === 'bullish' && styles.toggleTextBull]}>
                 🐂 Bullish
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.toggleBtn, sentiment === 'bearish' && styles.toggleBtnBear]}
+              style={[styles.toggleBtn, { backgroundColor: colors.card, borderColor: colors.border }, sentiment === 'bearish' && styles.toggleBtnBear]}
               onPress={() => {
                 if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setSentiment('bearish');
               }}
             >
-              <Text style={[styles.toggleText, sentiment === 'bearish' && styles.toggleTextBear]}>
+              <Text style={[styles.toggleText, { color: colors.textSecondary }, sentiment === 'bearish' && styles.toggleTextBear]}>
                 🐻 Bearish
               </Text>
             </TouchableOpacity>
           </View>
-          <View style={styles.inputWrap}>
+          <View style={[styles.inputWrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { color: colors.text }]}
               value={inputText}
               onChangeText={setInputText}
               placeholder="Say something..."
-              placeholderTextColor={COLORS.textTertiary}
+              placeholderTextColor={colors.textTertiary}
               multiline
               maxLength={500}
               editable={!posting}
@@ -363,9 +370,9 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
               hitSlop={8}
             >
               {posting ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={colors.text} />
               ) : (
-                <Ionicons name="send" size={20} color="#fff" />
+                <Ionicons name="send" size={20} color={colors.text} />
               )}
             </TouchableOpacity>
           </View>
@@ -409,8 +416,8 @@ const styles = StyleSheet.create({
   },
   bullishBadge: { backgroundColor: COLORS.positive },
   bearishBadge: { backgroundColor: COLORS.negative },
-  sentimentText: { fontSize: 11, fontWeight: '600', color: '#fff' },
-  body: { fontSize: 15, color: COLORS.textSecondary, lineHeight: 22 },
+  sentimentText: { fontSize: 11, fontWeight: '600' },
+  body: { fontSize: 15, lineHeight: 22 },
   actionsRow: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12 },
   actionBtn: {
     flexDirection: 'row',
@@ -458,7 +465,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   toggleBtnBull: { backgroundColor: COLORS.neonMintDim, borderColor: COLORS.neonMint },
-  toggleBtnBear: { backgroundColor: 'rgba(255, 59, 48, 0.2)', borderColor: COLORS.negative },
+  toggleBtnBear: { backgroundColor: COLORS.negativeDim, borderColor: COLORS.negative },
   toggleText: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
   toggleTextBull: { color: COLORS.neonMint },
   toggleTextBear: { color: COLORS.negative },

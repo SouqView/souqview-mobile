@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,8 +12,10 @@ import {
 import Svg, { Polyline, Polygon } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { COLORS, TYPO } from '../../constants/theme';
+import { COLORS, TYPO, type ThemeColors } from '../../constants/theme';
 import { useExpertise } from '../../contexts/ExpertiseContext';
+import { useTheme } from '../../contexts/ThemeContext';
+import { TypewriterText } from '../../src/components';
 import { getFaheemForecast, toFaheemMode } from '../../src/services/aiService';
 import client from '../../api/client';
 
@@ -76,7 +78,9 @@ async function getPredictedPrices(
 }
 
 export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITabProps) {
+  const { colors } = useTheme();
   const { expertiseLevel } = useExpertise();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [rationale, setRationale] = useState<string>('');
   const [loadingRationale, setLoadingRationale] = useState(true);
   const [predicted, setPredicted] = useState<ForecastPoint[]>([]);
@@ -97,8 +101,12 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
     getFaheemForecast(symbol, toFaheemMode(expertiseLevel), apiTimeframe)
       .then((res) => {
         if (!cancelled) {
-          const text = res.prediction ?? res.rationale ?? '';
-          setRationale(text);
+          const rangeStr =
+            res.range_low != null && res.range_high != null
+              ? `Range: ${res.range_low} – ${res.range_high}. `
+              : '';
+          const text = rangeStr + (res.the_why ?? '');
+          setRationale(text.trim() || '');
         }
       })
       .catch(() => {
@@ -208,7 +216,7 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
 
       {loadingPredicted && !hasChart ? (
         <View style={[styles.chartPlaceholder, { width: chartWidth, height: CHART_HEIGHT }]}>
-          <ActivityIndicator color={COLORS.electricBlue} />
+          <ActivityIndicator color={colors.electricBlue} />
           <Text style={styles.placeholderText}>Loading chart…</Text>
         </View>
       ) : hasChart ? (
@@ -218,7 +226,7 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
             {confidencePolygonPoints ? (
               <Polygon
                 points={confidencePolygonPoints}
-                fill={COLORS.electricBlue}
+                fill={colors.electricBlue}
                 fillOpacity={0.15}
                 stroke="none"
               />
@@ -227,7 +235,7 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
               <Polyline
                 points={histPoints.trim()}
                 fill="none"
-                stroke={COLORS.textSecondary}
+                stroke={colors.textSecondary}
                 strokeWidth={2}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -237,7 +245,7 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
               <Polyline
                 points={predPoints.trim()}
                 fill="none"
-                stroke={COLORS.electricBlue}
+                stroke={colors.electricBlue}
                 strokeWidth={2}
                 strokeDasharray="8,4"
                 strokeLinecap="round"
@@ -268,18 +276,21 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
 
       <View style={styles.rationaleCard}>
         <View style={styles.rationaleHeader}>
-          <Ionicons name="sparkles" size={22} color={COLORS.electricBlue} />
+          <Ionicons name="sparkles" size={22} color={colors.electricBlue} />
           <Text style={styles.rationaleTitle}>Faheem&apos;s Rationale — {apiTimeframe}</Text>
         </View>
         {loadingRationale ? (
-          <ActivityIndicator color={COLORS.electricBlue} style={styles.rationaleLoader} />
+          <ActivityIndicator color={colors.electricBlue} style={styles.rationaleLoader} />
         ) : (
-          <Text style={styles.rationaleBody} selectable>
-            {rationale ? (() => {
+          <TypewriterText
+            text={rationale ? (() => {
               const sentences = rationale.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(Boolean);
               return sentences.slice(0, 3).join(' ').trim() || rationale;
             })() : `AI analysis for ${symbol} will appear here when the service is available.`}
-          </Text>
+            style={styles.rationaleBody}
+            haptics={false}
+            selectable
+          />
         )}
       </View>
 
@@ -290,78 +301,51 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: PADDING, paddingBottom: 100 },
-  timeframeRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  timeframePill: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.separator,
-  },
-  timeframePillActive: { backgroundColor: COLORS.electricBlueDim, borderColor: COLORS.electricBlue },
-  timeframeLabel: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
-  timeframeLabelActive: { color: COLORS.electricBlue },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 12,
-  },
-  chartWrap: { marginBottom: 20 },
-  chartPlaceholder: {
-    alignSelf: 'center',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.card,
-    borderRadius: 12,
-    marginVertical: 12,
-  },
-  placeholderText: { fontSize: 13, color: COLORS.textTertiary, marginTop: 8 },
-  legend: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 20,
-    marginTop: 12,
-  },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendLine: { width: 24, height: 2, borderRadius: 1 },
-  legendLineSolid: { backgroundColor: COLORS.textSecondary },
-  legendLineDashed: { backgroundColor: COLORS.electricBlue },
-  legendLineBand: { backgroundColor: COLORS.electricBlue, opacity: 0.4 },
-  legendText: { fontSize: 12, color: COLORS.textTertiary, fontVariant: ['tabular-nums'] },
-  rationaleCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  rationaleHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  rationaleTitle: {
-    ...TYPO.header,
-    fontSize: 18,
-    color: COLORS.text,
-  },
-  rationaleLoader: { marginVertical: 16 },
-  rationaleBody: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
-    lineHeight: 22,
-  },
-  disclaimer: {
-    fontSize: 11,
-    color: COLORS.textTertiary,
-    textAlign: 'center',
-    marginTop: 24,
-    fontStyle: 'italic',
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    content: { padding: PADDING, paddingBottom: 120 },
+    timeframeRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+    timeframePill: {
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 20,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.separator,
+    },
+    timeframePillActive: { backgroundColor: colors.electricBlueDim, borderColor: colors.electricBlue },
+    timeframeLabel: { fontSize: 14, fontWeight: '600', color: colors.textSecondary },
+    timeframeLabelActive: { color: colors.electricBlue },
+    sectionTitle: { fontSize: 17, fontWeight: '600', color: colors.text, marginBottom: 12 },
+    chartWrap: { marginBottom: 20 },
+    chartPlaceholder: {
+      alignSelf: 'center',
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      marginVertical: 12,
+    },
+    placeholderText: { fontSize: 13, color: colors.textTertiary, marginTop: 8 },
+    legend: { flexDirection: 'row', justifyContent: 'center', gap: 20, marginTop: 12 },
+    legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    legendLine: { width: 24, height: 2, borderRadius: 1 },
+    legendLineSolid: { backgroundColor: colors.textSecondary },
+    legendLineDashed: { backgroundColor: colors.electricBlue },
+    legendLineBand: { backgroundColor: colors.electricBlue, opacity: 0.4 },
+    legendText: { fontSize: 12, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
+    rationaleCard: {
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    rationaleHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+    rationaleTitle: { ...TYPO.header, fontSize: 18, color: colors.text },
+    rationaleLoader: { marginVertical: 16 },
+    rationaleBody: { fontSize: 15, color: colors.textSecondary, lineHeight: 22 },
+    disclaimer: { fontSize: 11, color: colors.textTertiary, textAlign: 'center', marginTop: 24, fontStyle: 'italic' },
+  });
+}

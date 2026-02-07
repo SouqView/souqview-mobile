@@ -39,6 +39,9 @@ interface StockDetailState {
   loadingTechnicals: boolean;
   loadingInsiders: boolean;
   loadingOverviewInsight: boolean;
+  /** Optimistic UI: from Watchlist route params, shown while detail loads. */
+  initialPrice?: string;
+  initialChange?: string;
 }
 
 interface StockDetailContextValue extends StockDetailState {
@@ -55,9 +58,13 @@ const StockDetailContext = createContext<StockDetailContextValue | null>(null);
 export function StockDetailProvider({
   symbol,
   children,
+  initialPrice,
+  initialChange,
 }: {
   symbol: string;
   children: React.ReactNode;
+  initialPrice?: string;
+  initialChange?: string;
 }) {
   const [detail, setDetail] = useState<Detail>(null);
   const [historical, setHistorical] = useState<Historical>(null);
@@ -120,8 +127,13 @@ export function StockDetailProvider({
     try {
       const res = await getStockNews(symbol);
       setNews(res ?? null);
-    } catch {
-      setNews(null);
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 404) {
+        setNews([]);
+      } else {
+        setNews(null);
+      }
     } finally {
       setLoadingNews(false);
     }
@@ -193,6 +205,8 @@ export function StockDetailProvider({
     loadingTechnicals,
     loadingInsiders,
     loadingOverviewInsight,
+    initialPrice,
+    initialChange,
     loadDetail,
     loadNews,
     loadFinancials,

@@ -1,6 +1,7 @@
 /**
  * SouqView – Apple Design System (iOS Stocks app style)
- * Dark: Pure Black. Light: White / Dark Blue text.
+ * Dark: Pure Black. Light: System Grey 6 background, dark text.
+ * Use useTheme().colors in components so Dark/Light mode apply correctly.
  */
 
 export type ThemeColors = {
@@ -11,6 +12,7 @@ export type ThemeColors = {
   electricBlueDim: string;
   neonMint: string;
   neonMintDim: string;
+  negativeDim: string;
   text: string;
   textSecondary: string;
   textTertiary: string;
@@ -34,6 +36,7 @@ export const COLORS: ThemeColors = {
   textTertiary: '#8E8E93',
   positive: '#34C759',
   negative: '#FF3B30',
+  negativeDim: 'rgba(255, 59, 48, 0.2)',
   border: 'rgba(255, 255, 255, 0.1)',
   separator: '#38383A',
 };
@@ -47,6 +50,7 @@ export const LIGHT_COLORS: ThemeColors = {
   text: '#1C1C1E',
   textSecondary: '#3A3A3C',
   textTertiary: '#8E8E93',
+  negativeDim: 'rgba(255, 59, 48, 0.15)',
   border: 'rgba(0, 0, 0, 0.1)',
   separator: '#C6C6C8',
 };

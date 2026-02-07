@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   Dimensions,
-  ActivityIndicator,
   ScrollView,
   TouchableOpacity,
   RefreshControl,
@@ -17,7 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../contexts/ThemeContext';
 import { COLORS, TYPO } from '../../constants/theme';
+import { TypewriterText, SkeletonLoader, SentimentBar } from '../../src/components';
 import { getFaheemOverview } from '../../src/services/aiService';
+import { calculateSmartSentiment } from '../../src/utils/sentimentEngine';
 import type { FaheemMode } from '../../src/services/aiService';
 import { getHistoricalData } from '../../services/api';
 
@@ -119,7 +120,7 @@ function StockLineChart({
     );
   }
 
-  const lineColor = isPositive ? '#34C759' : '#FF3B30';
+  const lineColor = isPositive ? colors.positive : colors.negative;
   const chartWidth = Dimensions.get('window').width - PADDING * 2 - 24;
   const innerHeight = CHART_HEIGHT - 24;
 
@@ -219,7 +220,7 @@ function StockLineChart({
             const bodyHeight = Math.max(1, bodyBottom - bodyTop);
             const wickTop = toY(c.high);
             const wickBottom = toY(c.low);
-            const fill = isUp ? '#34C759' : '#FF3B30';
+            const fill = isUp ? colors.positive : colors.negative;
             return (
               <React.Fragment key={i}>
                 <Line
@@ -363,12 +364,10 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
   const executives = Array.isArray(executivesList) ? executivesList.slice(0, 5).map((e: { name?: string; title?: string }) => ({ name: e?.name ?? '—', title: e?.title ?? '—' })) : [];
   const chartWidth = width - PADDING * 2 - 24;
 
-  const quoteForFaheem = (stats ?? statsFromQuote) ? { ...(stats ?? statsFromQuote), symbol } : { symbol };
-
   // Chart data for current timeframe (used for Faheem and display)
   const chartData = data ?? [];
 
-  // Faheem: strict triggering — only call API when chart has >= 10 points; re-fires when chartData updates
+  // Faheem Overview: POST /api/faheem/overview → response.data.analysis. Each section independent; show when this request completes.
   useEffect(() => {
     let isMounted = true;
     let activeRequest = false;
@@ -386,23 +385,22 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
 
         if (__DEV__) console.log(`🧠 Faheem: Analyzing ${chartData.length} candles for ${symbol}...`);
 
-        const quote = Object.keys(quoteForFaheem).length > 1 ? quoteForFaheem : undefined;
-        const res = await getFaheemOverview(symbol, faheemMode, quote);
-        const result = res?.rationale ?? null;
+        const res = await getFaheemOverview(symbol, faheemMode);
+        const analysis = res?.analysis ?? null;
 
         if (isMounted) {
-          setFaheemRationale(result);
-          setFaheemVerdict(res?.verdict ?? null);
+          setFaheemRationale(analysis);
+          setFaheemVerdict(null);
           setFaheemError(false);
-          if (result && result.length > 5 && !result.includes('Insufficient')) {
-            setAiAnalysis(result);
+          if (analysis && analysis.length > 5 && !analysis.includes('Insufficient')) {
+            setAiAnalysis(analysis);
           }
         }
       } catch (e) {
         if (__DEV__) console.error('AI Error:', e);
         if (isMounted) {
           setAiAnalysis('Analysis temporarily unavailable.');
-          setFaheemError(false);
+          setFaheemError(true);
         }
       } finally {
         if (isMounted) setFaheemLoading(false);
@@ -415,7 +413,7 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [symbol, timeframe, chartData]);
+  }, [symbol, timeframe, chartData, faheemMode]);
 
   const timeframeToInterval = (tf: string) => {
     switch (tf) {
@@ -458,6 +456,30 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
   const themedStyles = makeStyles(colors);
 
   const timeframes: Array<'1D' | '1W' | '1M' | '1Y'> = ['1D', '1W', '1M', '1Y'];
+
+  // Smart Sentiment: quote (MFM) + RSI + Faheem. Computed once per load; cache to avoid jumping.
+  const lastCandle = data?.length ? data[data.length - 1] : null;
+  const quoteForSentiment = useMemo(() => ({
+    high: lastCandle?.high ?? (Number.isFinite(high) ? high : price || 100),
+    low: lastCandle?.low ?? (Number.isFinite(low) ? low : price || 0),
+    close: price || (lastCandle?.close ?? 50),
+    changePercent: change,
+  }), [lastCandle, high, low, price, change]);
+  const faheemForSentiment = faheemLoading ? null : (faheemRationale ?? aiAnalysis ?? null);
+  const sentiment = useMemo(
+    () => calculateSmartSentiment(quoteForSentiment, null, faheemForSentiment, symbol),
+    [quoteForSentiment, faheemForSentiment, symbol]
+  );
+  const [cachedSentimentScore, setCachedSentimentScore] = useState(50);
+  const prevSymbolRef = useRef(symbol);
+  useEffect(() => {
+    if (symbol !== prevSymbolRef.current) {
+      prevSymbolRef.current = symbol;
+      setCachedSentimentScore(50);
+    }
+    const hasQuote = quoteForSentiment.close > 0 && Number.isFinite(quoteForSentiment.close);
+    if (hasQuote) setCachedSentimentScore(sentiment.score);
+  }, [symbol, quoteForSentiment.close, sentiment.score]);
 
   if (__DEV__) {
     console.log(
@@ -535,7 +557,7 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
 
       {chartLoading && !data.length ? (
         <View style={[themedStyles.chartPlaceholder, { width: chartWidth, height: CHART_HEIGHT }]}>
-          <ActivityIndicator color={colors.electricBlue} />
+          <SkeletonLoader width={chartWidth} height={CHART_HEIGHT} borderRadius={12} style={{ backgroundColor: colors.separator }} />
         </View>
       ) : (
         <View style={[themedStyles.chartWrap, { height: CHART_HEIGHT + 48 }]} key={`${timeframe}-${chartType}`}>
@@ -546,6 +568,8 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
           />
         </View>
       )}
+
+      <SentimentBar score={cachedSentimentScore} />
 
       <View style={themedStyles.faheemCard}>
         <Ionicons name="sparkles" size={20} color={colors.electricBlue} style={themedStyles.faheemIcon} />
@@ -559,7 +583,9 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
         </View>
         {faheemLoading ? (
           <View style={themedStyles.faheemSkeleton}>
-            <ActivityIndicator size="small" color={colors.electricBlue} />
+            <SkeletonLoader width="100%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 8 }} />
+            <SkeletonLoader width="85%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 8 }} />
+            <SkeletonLoader width="70%" height={14} style={{ backgroundColor: colors.separator }} />
             <Text style={themedStyles.faheemSkeletonText}>Analyzing chart data...</Text>
           </View>
         ) : faheemError ? (
@@ -568,9 +594,11 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
           </Text>
         ) : (
           <View style={themedStyles.faheemContent}>
-            <Text style={themedStyles.faheemSummary}>
-              {aiAnalysis || 'Analyzing chart data...'}
-            </Text>
+            <TypewriterText
+              text={faheemRationale ?? aiAnalysis ?? 'Analyzing chart data...'}
+              style={themedStyles.faheemSummary}
+              haptics={false}
+            />
           </View>
         )}
       </View>
@@ -645,7 +673,7 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
               </View>
             ))
           : (
-              <Text style={{ padding: 20, color: '#888' }}>No executive data found.</Text>
+              <Text style={[themedStyles.executivePlaceholder, { padding: 20 }]}>No executive data found.</Text>
             )}
       </View>
     </ScrollView>
@@ -663,7 +691,7 @@ function makeStyles(colors: typeof COLORS) {
     },
     errorTitle: { fontSize: 18, fontWeight: '600', color: colors.text, marginBottom: 8 },
     errorText: { fontSize: 15, color: colors.textSecondary, textAlign: 'center' },
-    content: { padding: PADDING, paddingBottom: 100 },
+    content: { padding: PADDING, paddingBottom: 120 },
     chartSection: { marginBottom: 4 },
     chartControlsRow: {
       flexDirection: 'row',
@@ -680,7 +708,7 @@ function makeStyles(colors: typeof COLORS) {
     },
     timeframeButtonActive: { backgroundColor: colors.electricBlue },
     timeframeLabel: { fontSize: 13, fontWeight: '600', color: colors.textTertiary },
-    timeframeLabelActive: { color: '#fff' },
+    timeframeLabelActive: { color: colors.text },
     chartTypeToggle: {
       padding: 8,
       borderRadius: 8,
@@ -717,8 +745,8 @@ function makeStyles(colors: typeof COLORS) {
     faheemTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: 8 },
     faheemTitle: { fontSize: 15, fontWeight: '600', color: colors.text },
     verdictBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    verdictBullish: { backgroundColor: 'rgba(52, 199, 89, 0.25)' },
-    verdictBearish: { backgroundColor: 'rgba(255, 59, 48, 0.25)' },
+    verdictBullish: { backgroundColor: colors.neonMintDim },
+    verdictBearish: { backgroundColor: colors.negativeDim },
     verdictText: { fontSize: 13, fontWeight: '600', color: colors.text },
     faheemSkeleton: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     faheemSkeletonText: { fontSize: 14, color: colors.textTertiary },
@@ -761,10 +789,25 @@ function makeStyles(colors: typeof COLORS) {
       paddingVertical: 8,
       paddingHorizontal: 16,
     },
-    executiveRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
+    executiveRow: {
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
     executiveRowLast: { borderBottomWidth: 0 },
-    executiveName: { fontSize: 16, fontWeight: 'bold', color: colors.text },
-    executiveTitle: { fontSize: 13, color: colors.textTertiary },
+    executiveName: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    executiveTitle: {
+      marginTop: 2,
+      fontSize: 13,
+      color: colors.textSecondary,
+      textAlign: 'left',
+    },
     executivePlaceholder: { fontSize: 14, color: colors.textTertiary, paddingVertical: 12 },
   });
 }

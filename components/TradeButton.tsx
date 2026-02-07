@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { usePortfolio } from '../contexts/PortfolioContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { COLORS } from '../constants/theme';
 
 interface TradeButtonProps {
@@ -23,6 +24,7 @@ interface TradeButtonProps {
 }
 
 export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
+  const { colors } = useTheme();
   const { buyStock, sellStock, cashBalance, getPosition } = usePortfolio();
   const [visible, setVisible] = useState(false);
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -90,7 +92,7 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
 
   return (
     <>
-      <SafeAreaView style={styles.stickyBarSafe} edges={['bottom']}>
+      <SafeAreaView style={[styles.stickyBarSafe, { backgroundColor: colors.electricBlue }]} edges={['bottom']}>
         <TouchableOpacity
           style={styles.stickyBar}
           onPress={() => {
@@ -116,70 +118,70 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
             fadeOut
             autoStart={false}
           />
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background, borderColor: colors.border }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Buy {symbol}</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Buy {symbol}</Text>
               <TouchableOpacity
                 onPress={closeModal}
                 hitSlop={12}
                 onPressIn={() => Platform.OS !== 'web' && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
               >
-                <Ionicons name="close" size={28} color={COLORS.text} />
+                <Ionicons name="close" size={28} color={colors.text} />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.availableCash}>Available Cash: $100,000</Text>
-            <Text style={styles.priceLine}>
-              Price: <Text style={styles.priceValue}>{price > 0 ? price.toFixed(2) : '—'} USD</Text>
+            <Text style={[styles.availableCash, { color: colors.textTertiary }]}>Available Cash: $100,000</Text>
+            <Text style={[styles.priceLine, { color: colors.textSecondary }]}>
+              Price: <Text style={[styles.priceValue, { color: colors.neonMint }]}>{price > 0 ? price.toFixed(2) : '—'} USD</Text>
             </Text>
 
             <View style={styles.toggleRow}>
               <TouchableOpacity
-                style={[styles.toggleBtn, side === 'buy' && styles.toggleBtnActive]}
+                style={[styles.toggleBtn, { backgroundColor: colors.card, borderColor: colors.border }, side === 'buy' && styles.toggleBtnActive]}
                 onPress={() => {
                   if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   setSide('buy');
                 }}
               >
-                <Text style={[styles.toggleText, side === 'buy' && styles.toggleTextActive]}>Buy</Text>
+                <Text style={[styles.toggleText, { color: colors.textSecondary }, side === 'buy' && styles.toggleTextActive]}>Buy</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.toggleBtn, side === 'sell' && styles.toggleBtnActiveSell]}
+                style={[styles.toggleBtn, { backgroundColor: colors.card, borderColor: colors.border }, side === 'sell' && styles.toggleBtnActiveSell]}
                 onPress={() => {
                   if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   setSide('sell');
                 }}
               >
-                <Text style={[styles.toggleText, side === 'sell' && styles.toggleTextActiveSell]}>Sell</Text>
+                <Text style={[styles.toggleText, { color: colors.textSecondary }, side === 'sell' && styles.toggleTextActiveSell]}>Sell</Text>
               </TouchableOpacity>
             </View>
 
             {side === 'sell' && position && (
-              <Text style={styles.holding}>You have {position.quantity} shares</Text>
+              <Text style={[styles.holding, { color: colors.textTertiary }]}>You have {position.quantity} shares</Text>
             )}
 
-            <Text style={styles.label}>Share quantity or USD amount</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Share quantity or USD amount</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
               value={quantity}
               onChangeText={(t) => { setQuantity(t); setErrorMessage(null); }}
               keyboardType="decimal-pad"
               placeholder="0"
-              placeholderTextColor={COLORS.textTertiary}
+              placeholderTextColor={colors.textTertiary}
             />
 
             {qty > 0 && price > 0 && (
-              <Text style={styles.total}>Total: {total.toFixed(2)} USD</Text>
+              <Text style={[styles.total, { color: colors.text }]}>Total: {total.toFixed(2)} USD</Text>
             )}
 
             {errorMessage ? (
-              <Text style={styles.errorText}>{errorMessage}</Text>
+              <Text style={[styles.errorText, { color: colors.negative }]}>{errorMessage}</Text>
             ) : null}
 
             <TouchableOpacity
               style={[
                 styles.submitBtn,
-                (side === 'buy' ? canBuy : canSell) ? styles.submitBtnActive : styles.submitBtnDisabled,
+                (side === 'buy' ? canBuy : canSell) ? [styles.submitBtnActive, { backgroundColor: colors.electricBlue }] : styles.submitBtnDisabled,
               ]}
               onPress={handleExecute}
               disabled={!(side === 'buy' ? canBuy : canSell) || submitting}
@@ -188,12 +190,12 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
               {submitting ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={[(side === 'buy' ? canBuy : canSell) ? styles.submitTextActive : styles.submitTextDisabled]}>
+                <Text style={[(side === 'buy' ? canBuy : canSell) ? styles.submitTextActive : [styles.submitTextDisabled, { color: colors.textTertiary }]]}>
                   Confirm {side === 'buy' ? 'Buy' : 'Sell'}
                 </Text>
               )}
             </TouchableOpacity>
-            <Text style={styles.xpHint}>+50 XP per trade</Text>
+            <Text style={[styles.xpHint, { color: colors.neonMint }]}>+50 XP per trade</Text>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -207,8 +209,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#007AFF',
   },
+  /** Trade bar: single source of truth for all tabs (StockDetailView + StockDashboard). Height 50, full width, no extra padding. */
   stickyBar: {
     height: 50,
     alignItems: 'center',
@@ -221,48 +223,41 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: COLORS.backgroundSecondary,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 24,
     paddingBottom: 40,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  modalTitle: { fontSize: 22, fontWeight: '700', color: COLORS.text },
-  availableCash: { fontSize: 15, color: '#8E8E93', marginBottom: 8 },
-  priceLine: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 16 },
-  priceValue: { color: COLORS.neonMint, fontWeight: '700' },
+  modalTitle: { fontSize: 22, fontWeight: '700' },
+  availableCash: { fontSize: 15, marginBottom: 8 },
+  priceLine: { fontSize: 14, marginBottom: 16 },
+  priceValue: { fontWeight: '700' },
   toggleRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
   toggleBtn: {
     flex: 1,
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
-    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   toggleBtnActive: { backgroundColor: COLORS.neonMintDim, borderColor: COLORS.neonMint },
   toggleBtnActiveSell: { backgroundColor: COLORS.negative + '30', borderColor: COLORS.negative },
-  toggleText: { fontSize: 16, fontWeight: '600', color: COLORS.textSecondary },
+  toggleText: { fontSize: 16, fontWeight: '600' },
   toggleTextActive: { color: COLORS.neonMint },
   toggleTextActiveSell: { color: COLORS.negative },
-  holding: { fontSize: 13, color: COLORS.textTertiary, marginBottom: 12 },
-  label: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 8 },
+  holding: { fontSize: 13, marginBottom: 12 },
+  label: { fontSize: 14, marginBottom: 8 },
   input: {
-    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: COLORS.border,
     borderRadius: 12,
     padding: 14,
     fontSize: 18,
-    color: COLORS.text,
     marginBottom: 12,
   },
-  total: { fontSize: 15, fontWeight: '600', color: COLORS.text, marginBottom: 20 },
-  errorText: { fontSize: 14, color: COLORS.negative, marginBottom: 12 },
+  total: { fontSize: 15, fontWeight: '600', marginBottom: 20 },
+  errorText: { fontSize: 14, marginBottom: 12 },
   submitBtn: {
     backgroundColor: COLORS.textTertiary,
     minHeight: 44,
@@ -271,9 +266,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  submitBtnActive: { backgroundColor: COLORS.electricBlue },
+  submitBtnActive: {},
   submitBtnDisabled: {},
   submitTextActive: { fontSize: 17, fontWeight: '700', color: '#fff' },
-  submitTextDisabled: { fontSize: 17, fontWeight: '700', color: COLORS.textTertiary },
-  xpHint: { fontSize: 12, color: COLORS.neonMint, textAlign: 'center', marginTop: 12 },
+  submitTextDisabled: { fontSize: 17, fontWeight: '700' },
+  xpHint: { fontSize: 12, textAlign: 'center', marginTop: 12 },
 });
