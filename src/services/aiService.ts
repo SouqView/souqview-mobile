@@ -9,13 +9,20 @@ import axios from 'axios';
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
 
-const FAHEEM_TIMEOUT_MS = 25000;
+/** 45s so slow Groq/LLM responses are not treated as server failure. */
+const FAHEEM_TIMEOUT_MS = 45000;
+
+/** Delay between Faheem requests to avoid 429 (one request at a time + gap). */
+const FAHEEM_QUEUE_GAP_MS = 2000;
+
+/** On web, omit credentials so CORS doesn't require Allow-Credentials + exact origin. */
+const isWeb = typeof window !== 'undefined';
 
 const aiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: FAHEEM_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: true,
+  withCredentials: !isWeb,
 });
 
 if (__DEV__) {
@@ -28,23 +35,41 @@ function getRequestUrl(path: string): string {
   return base ? `${base}/${p}` : p;
 }
 
+/** Queue: run one Faheem POST at a time and wait FAHEEM_QUEUE_GAP_MS after each to avoid 429. */
+let faheemQueueLastDone = 0;
+async function runQueuedFaheem<T>(fn: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const wait = Math.max(0, faheemQueueLastDone - now + FAHEEM_QUEUE_GAP_MS);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  try {
+    const result = await fn();
+    faheemQueueLastDone = Date.now();
+    return result;
+  } catch (e) {
+    faheemQueueLastDone = Date.now();
+    throw e;
+  }
+}
+
 async function postAi<T = unknown>(path: string, body?: object): Promise<T> {
   const fullUrl = getRequestUrl(path);
-  try {
-    const { data } = await aiClient.post<T>(path, body);
-    return data as T;
-  } catch (error: unknown) {
-    if (__DEV__) {
-      const err = error as { code?: string; message?: string; response?: { status?: number } };
-      console.error('[aiService] Request failed:', {
-        url: fullUrl,
-        code: err?.code ?? 'unknown',
-        message: err?.message ?? (error instanceof Error ? error.message : String(error)),
-        status: err?.response?.status ?? 'no response',
-      });
+  return runQueuedFaheem(async () => {
+    try {
+      const { data } = await aiClient.post<T>(path, body);
+      return data as T;
+    } catch (error: unknown) {
+      if (__DEV__) {
+        const err = error as { code?: string; message?: string; response?: { status?: number } };
+        console.error('[aiService] Request failed:', {
+          url: fullUrl,
+          code: err?.code ?? 'unknown',
+          message: err?.message ?? (error instanceof Error ? error.message : String(error)),
+          status: err?.response?.status ?? 'no response',
+        });
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 export type FaheemMode = 'beginner' | 'advanced';
@@ -100,23 +125,44 @@ export async function getFaheemChartAnalysis(
 /** Alias for getFaheemChartAnalysis (same 60-candle sweet-spot payload). */
 export const getFaheemAnalysis = getFaheemChartAnalysis;
 
+/** Strict type for Faheem overview API. Prevents hallucinated or malformed JSON from breaking the frontend. */
+export interface FaheemOverviewResponse {
+  analysis?: string;
+}
+
+/**
+ * Validation layer: ensure LLM/backend response is a valid object with optional analysis string.
+ * Returns a safe object; never throws. Use before passing to UI.
+ */
+export function validateFaheemOverviewResponse(raw: unknown): FaheemOverviewResponse {
+  if (raw == null) return {};
+  if (typeof raw !== 'object') return {};
+  const o = raw as Record<string, unknown>;
+  const analysis = o.analysis;
+  if (typeof analysis === 'string') return { analysis };
+  if (typeof analysis === 'number') return { analysis: String(analysis) };
+  return {};
+}
+
 /**
  * POST /api/faheem/overview
- * Body: { symbol, mode }. Success (200): { analysis: string } — use response.data.analysis.
+ * Body: { symbol, mode }. Success (200): { analysis: string }.
+ * Response is validated so malformed JSON does not crash the frontend.
  */
 export async function getFaheemOverview(
   symbol: string,
   mode: FaheemMode
-): Promise<{ analysis?: string }> {
+): Promise<FaheemOverviewResponse> {
   const base = aiClient.defaults.baseURL ?? '';
   const path = 'faheem/overview';
   const fullUrl = base.endsWith('/') ? `${base}${path}` : `${base}/${path}`;
   if (__DEV__) console.log(`🔗 Faheem Overview → ${fullUrl}`);
-  const data = await postAi<{ analysis?: string }>('/faheem/overview', {
-    symbol,
-    mode,
-  });
-  return data ?? {};
+  try {
+    const data = await postAi<unknown>('/faheem/overview', { symbol, mode });
+    return validateFaheemOverviewResponse(data);
+  } catch {
+    return {};
+  }
 }
 
 /**

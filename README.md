@@ -49,7 +49,8 @@ Code is organized under `src/`:
 2. **Environment:** Copy `.env.example` to `.env`. Set **Supabase** (required for Auth): `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` from [Supabase Dashboard → Project Settings → API](https://supabase.com/dashboard). Set `EXPO_PUBLIC_API_URL` to your backend (e.g. `http://localhost:5000/api`).
 3. Run: `npx expo start` then choose iOS/Android/Web or scan QR code with Expo Go.
 
-Backend must be running (e.g. `http://localhost:5000`) and CORS allowed.
+Backend must be running (e.g. `http://localhost:5000`) and **CORS allowed**.  
+**Web:** If the chart shows "Chart Unavailable" on web but works on phone, the browser is blocking API requests. Configure your backend to allow the web origin (e.g. `http://localhost:8081` or the URL Expo shows for web) in CORS headers.
 
 **Backend APIs:** The app expects a backend that uses three services (configure keys on the backend only, never in the mobile app):
 

@@ -92,9 +92,9 @@ export function TradeButton({ symbol, currentPrice }: TradeButtonProps) {
 
   return (
     <>
-      <SafeAreaView style={[styles.stickyBarSafe, { backgroundColor: colors.electricBlue }]} edges={['bottom']}>
+      <SafeAreaView style={styles.stickyBarSafe} edges={['bottom']}>
         <TouchableOpacity
-          style={styles.stickyBar}
+          style={[styles.stickyBar, { backgroundColor: colors.electricBlue }]}
           onPress={() => {
           if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setVisible(true);
@@ -209,10 +209,15 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    alignItems: 'center',
   },
-  /** Trade bar: single source of truth for all tabs (StockDetailView + StockDashboard). Height 50, full width, no extra padding. */
   stickyBar: {
     height: 50,
+    minWidth: '100%',
+    maxWidth: '100%',
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },

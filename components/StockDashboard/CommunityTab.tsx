@@ -385,7 +385,7 @@ export function CommunityTab({ symbol }: CommunityTabProps) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   scroll: { flex: 1 },
-  content: { padding: 16, paddingBottom: 120 },
+  content: { padding: 16, paddingBottom: 100 },
   header: { fontSize: 17, fontWeight: '600', color: COLORS.text, marginBottom: 12 },
   loadingWrap: { alignItems: 'center', paddingVertical: 32 },
   loadingText: { fontSize: 13, color: COLORS.textTertiary, marginTop: 8 },
@@ -444,7 +444,7 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 8,
+    paddingBottom: 66,
   },
   replyingBar: {
     flexDirection: 'row',

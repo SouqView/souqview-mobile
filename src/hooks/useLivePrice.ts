@@ -1,9 +1,10 @@
 /**
- * Smart Polling: refresh price every few seconds ONLY when the screen is focused.
- * Stops immediately when the user leaves the screen.
+ * Smart Polling: refresh price every few seconds ONLY when the screen is focused and app is active.
+ * Stops on unmount and when the app goes to background.
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { fetchQuoteUncached } from '../services/marketData';
 
@@ -16,6 +17,8 @@ export interface LivePriceResult {
   percentChange: number | undefined;
   /** True while a poll request is in flight. */
   loading: boolean;
+  /** True when last request returned 429 (show "Live updates paused"). */
+  rateLimited: boolean;
 }
 
 /**
@@ -31,6 +34,7 @@ export function useLivePrice(
   const [previousPrice, setPreviousPrice] = useState<number | undefined>(undefined);
   const [percentChange, setPercentChange] = useState<number | undefined>(undefined);
   const [loading, setLoading] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPriceRef = useRef<number | undefined>(undefined);
 
@@ -45,6 +49,7 @@ export function useLivePrice(
 
     const fetchPrice = async () => {
       setLoading(true);
+      setRateLimited(false);
       try {
         const quote = await fetchQuoteUncached(symbol);
         const price =
@@ -66,25 +71,38 @@ export function useLivePrice(
           setCurrentPrice(price);
         }
         if (change !== undefined) setPercentChange(change);
-      } catch (_) {
-        // Keep previous values on error
+      } catch (e: unknown) {
+        const status = (e as { response?: { status?: number } })?.response?.status;
+        if (status === 429) setRateLimited(true);
       } finally {
         setLoading(false);
       }
     };
 
-    // First fetch immediately
-    fetchPrice();
-
-    intervalRef.current = setInterval(fetchPrice, intervalMs);
-
-    return () => {
+    const clearPoll = () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
+
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next !== 'active') {
+        clearPoll();
+      } else if (isFocused && symbol) {
+        fetchPrice();
+        intervalRef.current = setInterval(fetchPrice, intervalMs);
+      }
+    });
+
+    fetchPrice();
+    intervalRef.current = setInterval(fetchPrice, intervalMs);
+
+    return () => {
+      sub.remove();
+      clearPoll();
+    };
   }, [symbol, intervalMs, isFocused]);
 
-  return { currentPrice, previousPrice, percentChange, loading };
+  return { currentPrice, previousPrice, percentChange, loading, rateLimited };
 }

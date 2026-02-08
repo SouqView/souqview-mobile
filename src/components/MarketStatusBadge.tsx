@@ -18,6 +18,8 @@ export interface MarketStatusBadgeProps {
   quoteTimestamp?: number | string | null;
   /** Override status (e.g. from API). If set, quoteTimestamp is still used for "Data Delayed". */
   statusOverride?: MarketStatusResult | null;
+  /** When true (e.g. inside header over Aura), use white text for contrast. */
+  forceWhiteText?: boolean;
 }
 
 function usePulse(isOpen: boolean) {
@@ -36,7 +38,7 @@ function usePulse(isOpen: boolean) {
   return useAnimatedStyle(() => ({ opacity: opacity.value }));
 }
 
-export function MarketStatusBadge({ quoteTimestamp, statusOverride }: MarketStatusBadgeProps) {
+export function MarketStatusBadge({ quoteTimestamp, statusOverride, forceWhiteText }: MarketStatusBadgeProps) {
   const { colors } = useTheme();
   const result = useMemo(() => {
     if (statusOverride) return statusOverride;
@@ -46,7 +48,7 @@ export function MarketStatusBadge({ quoteTimestamp, statusOverride }: MarketStat
   const isOpen = result.status === 'Market Open';
   const animatedDotStyle = usePulse(isOpen);
 
-  const textColor = colors.textSecondary;
+  const textColor = forceWhiteText ? '#FFFFFF' : colors.textSecondary;
 
   return (
     <View style={styles.row}>

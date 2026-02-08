@@ -8,6 +8,7 @@ import { useExpertise } from '../../contexts/ExpertiseContext';
 import { toFaheemMode } from '../../src/services/aiService';
 import { useLivePrice } from '../../src/hooks/useLivePrice';
 import { StockLogo, MarketStatusBadge, StockHeaderAura } from '../../src/components';
+import { getMarketStatus } from '../../src/utils/marketHours';
 import { OverviewTab } from './OverviewTab';
 import type { OverviewTabProps } from './OverviewTab';
 
@@ -66,25 +67,64 @@ function getQuoteTimestamp(detail: unknown): number | string | undefined {
 
 function PriceHeader() {
   const { colors } = useTheme();
-  const { detail, loadingDetail, symbol, initialPrice: initialPriceStr, initialChange: initialChangeStr } = useStockDetail();
-  const { currentPrice: livePrice, previousPrice, percentChange: livePercentChange } = useLivePrice(symbol, 5000);
+  const {
+    detail,
+    loadingDetail,
+    symbol,
+    initialName: initialNameStr,
+    initialPrice: initialPriceStr,
+    initialChange: initialChangeStr,
+    initialLastClose: initialLastCloseStr,
+    rateLimitError,
+  } = useStockDetail();
+  const { currentPrice: livePrice, previousPrice, percentChange: livePercentChange, rateLimited } = useLivePrice(symbol, 5000);
+  const showPausedIndicator = rateLimitError === 'RATE_LIMIT' || rateLimited;
 
   const stats = detail?.statistics;
-  const fallbackPrice = Number(stats?.currentPrice) || 0;
+  const quote = detail?.quote as { close?: number; price?: number } | undefined;
+  const marketStatus = getMarketStatus();
+  const isMarketClosed = marketStatus.status === 'Market Closed';
+  const quoteLastClose = quote?.close ?? quote?.price;
+  const parsedInitialLastClose =
+    initialLastCloseStr != null && initialLastCloseStr !== '' && initialLastCloseStr !== '—'
+      ? Number(initialLastCloseStr)
+      : null;
+  const lastClose = quoteLastClose ?? (Number.isFinite(parsedInitialLastClose) ? parsedInitialLastClose : null);
+  const fallbackPrice = Number(stats?.currentPrice);
+  const effectivePrice =
+    isMarketClosed && lastClose != null && Number.isFinite(lastClose)
+      ? lastClose
+      : (Number.isFinite(fallbackPrice) ? fallbackPrice : 0);
   const fallbackChange = Number(stats?.percent_change) ?? 0;
-  const parsedInitialPrice = initialPriceStr != null && initialPriceStr !== '' && initialPriceStr !== '—'
-    ? Number(initialPriceStr)
-    : null;
-  const parsedInitialChange = initialChangeStr != null && initialChangeStr !== '' && initialChangeStr !== '—'
-    ? Number(initialChangeStr)
-    : null;
-  const priceNum = livePrice !== undefined ? livePrice : (fallbackPrice || (Number.isFinite(parsedInitialPrice) ? parsedInitialPrice : null));
-  const changeNum = livePercentChange !== undefined ? livePercentChange : (Number.isFinite(fallbackChange) ? fallbackChange : (Number.isFinite(parsedInitialChange) ? parsedInitialChange : 0));
-  const isPositive = changeNum >= 0;
+  const parsedInitialPrice =
+    initialPriceStr != null && initialPriceStr !== '' && initialPriceStr !== '—' ? Number(initialPriceStr) : null;
+  const parsedInitialChange =
+    initialChangeStr != null && initialChangeStr !== '' && initialChangeStr !== '—' ? Number(initialChangeStr) : null;
+
+  const hasInitialData = (initialPriceStr != null && initialPriceStr !== '—') || (initialNameStr != null && initialNameStr !== '');
+  const useInitialAsPrimary = loadingDetail && hasInitialData;
+
+  const priceNum = useInitialAsPrimary
+    ? (Number.isFinite(parsedInitialPrice) ? parsedInitialPrice : isMarketClosed && Number.isFinite(parsedInitialLastClose) ? parsedInitialLastClose : null)
+    : (livePrice !== undefined
+        ? livePrice
+        : effectivePrice ||
+          (Number.isFinite(parsedInitialPrice) ? parsedInitialPrice : isMarketClosed && lastClose != null ? lastClose : null));
+  const changeNum = useInitialAsPrimary
+    ? (Number.isFinite(parsedInitialChange) ? parsedInitialChange : 0)
+    : (livePercentChange !== undefined
+        ? livePercentChange
+        : Number.isFinite(fallbackChange)
+          ? fallbackChange
+          : Number.isFinite(parsedInitialChange)
+            ? parsedInitialChange
+            : 0);
+  const isPositive = (changeNum ?? 0) >= 0;
 
   const profile = detail?.profile as { name?: string | { en?: string }; sector?: string | { en?: string }; description?: string | { en?: string } } | undefined;
   const nameStr = typeof profile?.name === 'string' ? profile.name : profile?.name?.en;
   const sectorStr = typeof profile?.sector === 'string' ? profile.sector : profile?.sector?.en;
+  const displayName = useInitialAsPrimary ? (initialNameStr || symbol) : (nameStr || initialNameStr || symbol);
 
   const flashAnim = useRef(new Animated.Value(0)).current;
   const prevLiveRef = useRef<number | undefined>(undefined);
@@ -103,27 +143,32 @@ function PriceHeader() {
     });
   }, [livePrice, previousPrice, flashAnim]);
 
+  const hasAura = true;
+  const baseTextColor = hasAura ? '#FFFFFF' : colors.text;
   const priceColor = flashAnim.interpolate({
     inputRange: [0, 0.5, 1],
     outputRange: [
-      colors.text,
+      baseTextColor,
       previousPrice !== undefined && livePrice !== undefined
         ? livePrice > previousPrice
           ? colors.positive
           : colors.negative
-        : colors.text,
-      colors.text,
+        : baseTextColor,
+      baseTextColor,
     ],
   });
 
   const changeStr = (priceNum != null && priceNum !== 0) || Number.isFinite(changeNum)
     ? `${isPositive ? '+' : ''}${Number(changeNum).toFixed(2)}%`
     : '—';
-  const hasOptimistic = Number.isFinite(parsedInitialPrice) || Number.isFinite(parsedInitialChange);
-  const showPrice = !loadingDetail || livePrice !== undefined || hasOptimistic;
+  const hasOptimistic =
+    Number.isFinite(parsedInitialPrice) || Number.isFinite(parsedInitialChange) || Number.isFinite(parsedInitialLastClose);
+  const showPrice = useInitialAsPrimary || !loadingDetail || livePrice !== undefined || hasOptimistic;
 
   const auraHeight = Math.max(200, Dimensions.get('window').height * 0.25);
   const sentimentScore = 50 + Math.max(-50, Math.min(50, Number(changeNum) * 5));
+  const headerTextColor = hasAura ? '#FFFFFF' : colors.text;
+  const headerSubtextColor = hasAura ? '#FFFFFF' : colors.textTertiary;
 
   return (
     <View style={[styles.headerWrapper, { minHeight: auraHeight }]}>
@@ -132,20 +177,20 @@ function PriceHeader() {
       <View style={styles.headerRow}>
         <StockLogo symbol={symbol} size={50} />
         <View style={styles.headerTextWrap}>
-          <Text style={[styles.companyName, { color: colors.text }]} numberOfLines={1}>{nameStr || symbol}</Text>
-          <Text style={[styles.ticker, { color: colors.textTertiary }]} numberOfLines={1}>{sectorStr || symbol}</Text>
+          <Text style={[styles.companyName, { color: headerTextColor }]} numberOfLines={1}>{displayName}</Text>
+          <Text style={[styles.ticker, { color: headerSubtextColor }]} numberOfLines={1}>{sectorStr || symbol}</Text>
         </View>
       </View>
       <View style={styles.priceRow}>
         {!showPrice ? (
-          <Text style={[styles.price, { color: colors.text }]}>—</Text>
+          <Text style={[styles.price, { color: headerTextColor }]}>—</Text>
         ) : (
           <>
             <Animated.Text style={[styles.price, { color: priceColor }]} numberOfLines={1}>
               {(priceNum != null && Number.isFinite(priceNum)) ? Number(priceNum).toFixed(2) : (initialPriceStr && initialPriceStr !== '—' ? initialPriceStr : '—')}
             </Animated.Text>
             <View style={[styles.pill, isPositive ? { backgroundColor: colors.neonMintDim } : { backgroundColor: colors.negativeDim }]}>
-              <Text style={[styles.pillText, isPositive ? styles.positive : styles.negative]}>
+              <Text style={[styles.pillText, isPositive ? styles.positive : styles.negative, hasAura && { color: '#FFFFFF' }]}>
                 {changeStr}
               </Text>
             </View>
@@ -153,7 +198,12 @@ function PriceHeader() {
         )}
       </View>
       <View style={styles.statusWrap}>
-        <MarketStatusBadge quoteTimestamp={getQuoteTimestamp(detail)} />
+        <MarketStatusBadge quoteTimestamp={getQuoteTimestamp(detail)} forceWhiteText={hasAura} />
+        {showPausedIndicator && (
+          <Text style={[styles.livePausedLabel, { color: hasAura ? 'rgba(255,255,255,0.85)' : colors.textTertiary }]}>
+            Live updates paused
+          </Text>
+        )}
       </View>
       </View>
     </View>
@@ -162,7 +212,7 @@ function PriceHeader() {
 
 function OverviewScreen() {
   const { expertiseLevel } = useExpertise();
-  const { symbol, detail, historical, loadingDetail, loadDetail } = useStockDetail();
+  const { symbol, detail, historical, loadingDetail, loadDetail, symbolForAi, chartUnavailable, rateLimitError, suppressErrorView } = useStockDetail();
   const mode = toFaheemMode(expertiseLevel);
   const chartData = useMemo(() => formatHistoricalToChartData(historical as OverviewTabProps['historical']), [historical]);
   return (
@@ -174,6 +224,10 @@ function OverviewScreen() {
       loading={loadingDetail}
       faheemMode={mode}
       onRefresh={loadDetail}
+      symbolForAi={symbolForAi}
+      chartUnavailable={chartUnavailable}
+      rateLimitError={rateLimitError === 'RATE_LIMIT'}
+      suppressErrorView={suppressErrorView}
     />
   );
 }
@@ -221,9 +275,11 @@ function CommunityScreen() {
 
 export interface StockDetailViewProps {
   symbol: string;
-  /** Passed from Watchlist for optimistic UI – show immediately while detail loads. */
+  /** Warm handoff from Watchlist – show immediately, zero loading for price. */
+  initialName?: string;
   initialPrice?: string;
   initialChange?: string;
+  initialLastClose?: string;
 }
 
 function TradeButtonWrapper() {
@@ -232,11 +288,17 @@ function TradeButtonWrapper() {
   return <TradeButton symbol={symbol} currentPrice={currentPrice} />;
 }
 
-export function StockDetailView({ symbol, initialPrice, initialChange }: StockDetailViewProps) {
+export function StockDetailView({ symbol, initialName, initialPrice, initialChange, initialLastClose }: StockDetailViewProps) {
   const { colors } = useTheme();
 
   return (
-    <StockDetailProvider symbol={symbol} initialPrice={initialPrice} initialChange={initialChange}>
+    <StockDetailProvider
+      symbol={symbol}
+      initialName={initialName}
+      initialPrice={initialPrice}
+      initialChange={initialChange}
+      initialLastClose={initialLastClose}
+    >
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <PriceHeader />
         <Tab.Navigator
@@ -271,26 +333,28 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 20,
+    paddingTop: 8,
+    paddingBottom: 12,
     zIndex: 1,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  headerTextWrap: { marginLeft: 12, flex: 1 },
+  headerTextWrap: { marginLeft: 10, flex: 1 },
   companyName: {
     ...TYPO.header,
     color: COLORS.text,
     letterSpacing: -0.5,
-    fontSize: 22,
+    fontSize: 20,
   },
-  ticker: { fontSize: 13, marginTop: 2 },
-  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14 },
-  statusWrap: { paddingTop: 6, paddingBottom: 4 },
+  ticker: { fontSize: 12, marginTop: 1 },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
+  statusWrap: { paddingTop: 4, paddingBottom: 2, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  livePausedLabel: { fontSize: 11, fontStyle: 'italic' },
   price: {
-    ...TYPO.price,
+    fontSize: 26,
+    fontWeight: '700',
     color: COLORS.text,
     fontVariant: ['tabular-nums'],
   },

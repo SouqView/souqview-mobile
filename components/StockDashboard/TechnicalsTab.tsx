@@ -383,7 +383,7 @@ export function TechnicalsTab({ symbol, technicals, loading, historical }: Techn
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 120 },
+  content: { padding: 16, paddingBottom: 100 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   sub: { color: COLORS.textSecondary, marginTop: 12 },
   pillsWrap: { flexDirection: 'row', gap: 8, marginBottom: 20, paddingRight: 16 },

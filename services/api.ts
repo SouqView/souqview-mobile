@@ -283,32 +283,216 @@ export type USSnapshotItem = {
   image?: string;
   lastPrice: string;
   percentChange: string;
+  /** Previous close for deriving % when provider sends 0.00%; backend sends as lastClose. */
+  lastClose?: number;
   summary?: { en: string; ar: string };
 };
 
-/** US-only watchlist/trending: fetches NASDAQ snapshot and filters to default US symbols. */
-export async function getUSMarketSnapshot(): Promise<{ marketSnapshot: USSnapshotItem[] }> {
-  const fallback = (): { marketSnapshot: USSnapshotItem[] } => ({
+/** Pick price/percent from top-level or nested quote/data so backend shape doesn't matter. */
+function pickPriceAndPct(raw: Record<string, unknown>): { price: number; pct: number } {
+  const quote = raw.quote != null && typeof raw.quote === 'object' ? (raw.quote as Record<string, unknown>) : null;
+  const data = raw.data != null && typeof raw.data === 'object' ? (raw.data as Record<string, unknown>) : null;
+  const src = quote ?? data ?? raw;
+  const price = Number(
+    src.lastPrice ?? src.price ?? src.close ?? src.current_price ?? src.previous_close ?? src.last
+    ?? (quote && (quote as Record<string, unknown>).close)
+    ?? (quote && (quote as Record<string, unknown>).price)
+    ?? (data && (data as Record<string, unknown>).close)
+    ?? (data && (data as Record<string, unknown>).price)
+    ?? 0
+  );
+  const pct = Number(
+    src.percentChange ?? src.percent_change ?? src.changesPercentage ?? src.change_pct ?? src.change_percent
+    ?? src.change ?? src.pct_change
+    ?? (quote && (quote as Record<string, unknown>).percent_change)
+    ?? (quote && (quote as Record<string, unknown>).change)
+    ?? (data && (data as Record<string, unknown>).percent_change)
+    ?? (data && (data as Record<string, unknown>).change)
+    ?? 0
+  );
+  return { price, pct };
+}
+
+/** Known backend keys for ticker/symbol (explicit order; backend sends one of these). */
+const SYMBOL_KEYS = [
+  'symbol',
+  'ticker',
+  'Symbol',
+  'Ticker',
+  'code',
+  'instrument',
+  'stock_symbol',
+  'symbol_id',
+  'ticker_symbol',
+] as const;
+
+function getSymbolFromRaw(raw: Record<string, unknown>): string {
+  const check = (obj: Record<string, unknown>): string => {
+    for (const key of SYMBOL_KEYS) {
+      const v = obj[key];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    const lower = (s: string) => s.toLowerCase();
+    for (const [k, v] of Object.entries(obj)) {
+      if ((lower(k) === 'symbol' || lower(k) === 'ticker') && v != null && String(v).trim() !== '')
+        return String(v).trim();
+    }
+    return '';
+  };
+  const fromTop = check(raw);
+  if (fromTop) return fromTop;
+  const quote = raw.quote != null && typeof raw.quote === 'object' ? (raw.quote as Record<string, unknown>) : null;
+  const data = raw.data != null && typeof raw.data === 'object' ? (raw.data as Record<string, unknown>) : null;
+  if (quote) { const q = check(quote); if (q) return q; }
+  if (data) { const d = check(data); if (d) return d; }
+  return '';
+}
+
+/** Normalization guard: prefer raw.symbol, then raw.ticker; if both missing, log full object (breach). */
+function getSymbolWithGuard(raw: Record<string, unknown>): string {
+  const fromSymbol = raw.symbol != null && String(raw.symbol).trim() !== '' ? String(raw.symbol).trim() : '';
+  const fromTicker = raw.ticker != null && String(raw.ticker).trim() !== '' ? String(raw.ticker).trim() : '';
+  const direct = fromSymbol || fromTicker;
+  if (direct) return direct;
+  if (__DEV__) {
+    console.warn('[SouqView Watchlist] Normalization breach: symbol and ticker missing – full raw object:', JSON.stringify(raw, null, 2));
+  }
+  return getSymbolFromRaw(raw);
+}
+
+/** Map backend quote shape (price/percent_change etc.) to USSnapshotItem so watchlist always has lastPrice & percentChange. */
+function toUSSnapshotItem(raw: Record<string, unknown>): USSnapshotItem {
+  const rawSymbol = getSymbolWithGuard(raw);
+  const rawName = (raw.name ?? raw.Name ?? '') as string;
+  const nameStr = typeof rawName === 'string' && rawName.trim() ? rawName.trim() : '';
+  const symbol = (rawSymbol || nameStr).toUpperCase().trim() || '—';
+  const name = nameStr || (symbol !== '—' ? symbol : '—');
+  const { price: priceNum, pct: pctNum } = pickPriceAndPct(raw);
+  const lastPrice = Number.isFinite(priceNum)
+    ? (priceNum >= 1 ? priceNum.toFixed(2) : priceNum.toFixed(4))
+    : '—';
+  const percentChange = Number.isFinite(pctNum) ? pctNum.toFixed(2) : '0.00';
+  const lastClose = typeof raw.lastClose === 'number' && Number.isFinite(raw.lastClose)
+    ? raw.lastClose
+    : (typeof raw.previous_close === 'number' && Number.isFinite(raw.previous_close) ? raw.previous_close : undefined);
+  return {
+    symbol,
+    name,
+    lastPrice,
+    percentChange,
+    ...(lastClose != null ? { lastClose } : {}),
+    image: typeof raw.image === 'string' ? raw.image : undefined,
+    summary: raw.summary != null && typeof raw.summary === 'object' ? raw.summary as { en: string; ar: string } : undefined,
+  };
+}
+
+/** Convert object keyed by symbol to array of items with symbol set. */
+function objectKeyedBySymbolToArray(bySymbol: Record<string, unknown>): unknown[] {
+  return Object.entries(bySymbol)
+    .filter(([, v]) => v != null && typeof v === 'object')
+    .map(([sym, v]) => ({ ...(v as Record<string, unknown>), symbol: sym }));
+}
+
+/** Normalize backend response: may be { marketSnapshot }, { data: [...] }, object keyed by symbol, or array. Map each item to USSnapshotItem. */
+function normalizeMarketSnapshotResponse(data: unknown): USSnapshotItem[] {
+  let list: unknown[] = [];
+  if (Array.isArray(data)) {
+    list = data;
+  } else if (data != null && typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    let rawList: unknown =
+      obj.marketSnapshot
+      ?? obj.quotes
+      ?? obj.result
+      ?? (obj.data != null && typeof obj.data === 'object'
+        ? Array.isArray(obj.data) ? obj.data : (obj.data as Record<string, unknown>).marketSnapshot
+        : undefined);
+    // Backend may wrap list: { marketSnapshot: { data: [...] } }, { result: { marketSnapshot: [...] } }, or { results: [...] }
+    if (rawList != null && typeof rawList === 'object' && !Array.isArray(rawList)) {
+      const inner = rawList as Record<string, unknown>;
+      const innerList = inner.marketSnapshot ?? inner.data ?? inner.results ?? inner.quotes ?? inner.list;
+      if (Array.isArray(innerList)) rawList = innerList;
+    }
+    if (Array.isArray(rawList)) {
+      list = rawList;
+    } else if (rawList != null && typeof rawList === 'object' && !Array.isArray(rawList)) {
+      // Backend may return { marketSnapshot: { AAPL: {...}, TSLA: {...} } } or same under data
+      list = objectKeyedBySymbolToArray(rawList as Record<string, unknown>);
+    } else if (obj.data != null && typeof obj.data === 'object' && !Array.isArray(obj.data)) {
+      list = objectKeyedBySymbolToArray(obj.data as Record<string, unknown>);
+    }
+  }
+  return list
+    .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
+    .map((item) => toUSSnapshotItem(item));
+}
+
+/** Result of getUSMarketSnapshot. fromFallback when backend failed or returned empty. error502 when backend returned 502. fromStaleCache when backend sent cached data. */
+export type USMarketSnapshotResult = {
+  marketSnapshot: USSnapshotItem[];
+  fromFallback?: boolean;
+  error502?: boolean;
+  fromStaleCache?: boolean;
+};
+
+/**
+ * Single batched request for the full watchlist.
+ * One HTTP call: GET /stock/market-snapshot?symbols=AAPL,TSLA,NVDA,... (comma-separated).
+ * Backend does one batch quote to Twelve Data. No per-symbol calls.
+ */
+const WATCHLIST_SYMBOLS_CSV = DEFAULT_US_WATCHLIST_SYMBOLS.filter(Boolean).join(',');
+
+export async function getUSMarketSnapshot(): Promise<USMarketSnapshotResult> {
+  const fallback = (): USMarketSnapshotResult => ({
     marketSnapshot: DEFAULT_US_WATCHLIST_SYMBOLS.slice(0, 10).map((symbol): USSnapshotItem => ({
       symbol,
       name: symbol,
       lastPrice: '—',
       percentChange: '0.00',
     })),
+    fromFallback: true,
   });
+
   try {
-    const sanitized = getSanitizedUrl(`/stock/market-snapshot/${US_EXCHANGE}`);
-    if (__DEV__) console.log('[SouqView Watchlist] GET', sanitized);
-    const data = await getMarketSnapshot(US_EXCHANGE);
-    const snapshot: USSnapshotItem[] = data?.marketSnapshot || [];
-    const allowed = new Set(DEFAULT_US_WATCHLIST_SYMBOLS);
-    const filtered = filterUSStocksOnly(snapshot).filter((item) => allowed.has(item.symbol));
-    if (filtered.length === 0) return fallback();
-    return { marketSnapshot: filtered };
-  } catch (e) {
+    const sanitized = getSanitizedUrl('/stock/market-snapshot', { symbols: WATCHLIST_SYMBOLS_CSV });
+    if (__DEV__) console.log('[SouqView Watchlist] GET (single batch)', sanitized);
+
+    const { data } = await client.get<Record<string, unknown>>('/stock/market-snapshot', {
+      params: { symbols: WATCHLIST_SYMBOLS_CSV },
+    });
+
+    const fromStaleCache = data?.fromStaleCache === true;
+    const snapshot = normalizeMarketSnapshotResponse(data);
+    const filtered = filterUSStocksOnly(snapshot);
+
+    if (__DEV__ && data != null) {
+      const ms = data.marketSnapshot;
+      const msType = ms == null ? 'null' : Array.isArray(ms) ? `array(${ms.length})` : typeof ms === 'object' ? `object(${Object.keys(ms as object).length} keys)` : typeof ms;
+      console.log('[SouqView Watchlist] marketSnapshot type:', msType, '| normalized:', snapshot.length, '| after filter:', filtered.length);
+      if (snapshot.length > 0) console.log('[SouqView Watchlist] First normalized item:', { symbol: snapshot[0].symbol, lastPrice: snapshot[0].lastPrice, percentChange: snapshot[0].percentChange });
+    }
+
+    if (filtered.length > 0) {
+      return { marketSnapshot: filtered, ...(fromStaleCache ? { fromStaleCache: true } : {}) };
+    }
+
+    if (__DEV__) console.warn('[SouqView Watchlist] No items after normalize/filter – using placeholder.');
+    return fallback();
+  } catch (e: unknown) {
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    const is502 = status === 502;
     if (__DEV__) {
-      console.warn('[SouqView Watchlist] Request failed. Ensure backend is running and EXPO_PUBLIC_API_URL is set.', e);
-      console.log('[SouqView Watchlist] Expected URL format:', getSanitizedUrl(`/stock/market-snapshot/${US_EXCHANGE}`));
+      console.warn('[SouqView Watchlist] Request failed.', is502 ? '(502 – data source failed)' : '', e);
+    }
+    if (is502) {
+      return { marketSnapshot: [], fromFallback: true, error502: true };
+    }
+    if (__DEV__) {
+      if (typeof window !== 'undefined') {
+        console.warn('[SouqView Watchlist] On web: ensure your backend allows CORS for this origin.');
+      } else {
+        console.log('[SouqView Watchlist] Ensure backend is running and EXPO_PUBLIC_API_URL is correct.');
+      }
     }
     return fallback();
   }

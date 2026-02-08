@@ -195,8 +195,8 @@ function FaheemSentiment({ headlines, styles }: { headlines: string[]; styles: R
 
 function makeNewsStyles(colors: ThemeColors) {
   return StyleSheet.create({
-    list: { padding: 16, paddingBottom: 120 },
-    skeletonList: { padding: 16, paddingBottom: 120 },
+    list: { padding: 16, paddingBottom: 100 },
+    skeletonList: { padding: 16, paddingBottom: 100 },
     sentimentSkeleton: { padding: 16, borderRadius: 12, marginBottom: 12 },
     newsCardSkeleton: { padding: 16, borderRadius: 12, marginBottom: 12, minHeight: 88 },
     centered: { flex: 1, justifyContent: 'center' as const, alignItems: 'center' as const, padding: 24 },

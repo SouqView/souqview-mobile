@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
-import { StockLogo, MarketStatusBadge, StockHeaderAura } from '../../src/components';
+import { StockLogo, MarketStatusBadge, StockHeaderAura, SkeletonLoader } from '../../src/components';
 import { SegmentedBar, SegmentId } from './SegmentedBar';
 import { OverviewTab } from './OverviewTab';
 import { NewsTab } from './NewsTab';
@@ -49,25 +49,31 @@ export function StockDashboard({ symbol }: StockDashboardProps) {
   const [technicals, setTechnicals] = useState<unknown>(null);
   const [insiders, setInsiders] = useState<unknown>(null);
   const [loadingDetail, setLoadingDetail] = useState(true);
+  const [loadingHistorical, setLoadingHistorical] = useState(true);
   const [loadingNews, setLoadingNews] = useState(false);
   const [loadingFinancials, setLoadingFinancials] = useState(false);
   const [loadingTechnicals, setLoadingTechnicals] = useState(false);
   const [loadingInsiders, setLoadingInsiders] = useState(false);
 
+  /** Progressive load: show price as soon as quote returns; chart when historical returns. */
   const loadDetail = useCallback(async () => {
     setLoadingDetail(true);
+    setLoadingHistorical(true);
     try {
-      const [resDetail, resHist] = await Promise.all([
-        getStockDetail(symbol),
-        getHistoricalData(symbol, '1day'),
-      ]);
+      const resDetail = await getStockDetail(symbol);
       setDetail(resDetail?.data ?? null);
-      setHistorical(resHist ?? null);
+      setLoadingDetail(false);
     } catch (_) {
       setDetail(null);
+      setLoadingDetail(false);
+    }
+    try {
+      const resHist = await getHistoricalData(symbol, '1day');
+      setHistorical(resHist ?? null);
+    } catch (_) {
       setHistorical(null);
     } finally {
-      setLoadingDetail(false);
+      setLoadingHistorical(false);
     }
   }, [symbol]);
 
@@ -129,6 +135,9 @@ export function StockDashboard({ symbol }: StockDashboardProps) {
   const isPositive = percentChange >= 0;
   const auraHeight = Math.max(200, Dimensions.get('window').height * 0.25);
   const sentimentScore = 50 + Math.max(-50, Math.min(50, Number(percentChange) * 5));
+  const hasAura = true;
+  const headerTextColor = hasAura ? '#FFFFFF' : colors.text;
+  const headerSubtextColor = hasAura ? '#FFFFFF' : colors.textTertiary;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -138,22 +147,22 @@ export function StockDashboard({ symbol }: StockDashboardProps) {
       <View style={[styles.headerRow, { backgroundColor: 'transparent' }]}>
         <StockLogo symbol={symbol} size={50} />
         <View style={styles.headerTextWrap}>
-          <Text style={[styles.companyName, { color: colors.text }]} numberOfLines={1}>{companyName}</Text>
-          <Text style={[styles.ticker, { color: colors.textTertiary }]} numberOfLines={1}>{sector}</Text>
+          <Text style={[styles.companyName, { color: headerTextColor }]} numberOfLines={1}>{companyName}</Text>
+          <Text style={[styles.ticker, { color: headerSubtextColor }]} numberOfLines={1}>{sector}</Text>
         </View>
       </View>
       <View style={[styles.priceRow, { borderBottomColor: colors.separator }]}>
-        <Text style={[styles.price, { color: colors.text }]}>
+        <Text style={[styles.price, { color: headerTextColor }]}>
           {price != null ? Number(price).toFixed(2) : '—'}
         </Text>
         <View style={[styles.pill, isPositive ? { backgroundColor: colors.neonMintDim } : { backgroundColor: colors.negativeDim }]}>
-          <Text style={[styles.pillText, isPositive ? styles.positive : styles.negative]}>
+          <Text style={[styles.pillText, isPositive ? styles.positive : styles.negative, hasAura && { color: '#FFFFFF' }]}>
             {price != null ? `${isPositive ? '+' : ''}${Number(percentChange).toFixed(2)}%` : '—'}
           </Text>
         </View>
       </View>
       <View style={styles.statusWrap}>
-        <MarketStatusBadge quoteTimestamp={getQuoteTimestamp(detail)} />
+        <MarketStatusBadge quoteTimestamp={getQuoteTimestamp(detail)} forceWhiteText={hasAura} />
       </View>
         </View>
       </View>
@@ -164,37 +173,66 @@ export function StockDashboard({ symbol }: StockDashboardProps) {
           symbol={symbol}
           detail={detail as OverviewTabProps['detail']}
           historical={historical as OverviewTabProps['historical']}
-          loading={loadingDetail}
+          loading={loadingDetail || loadingHistorical}
         />
       )}
       {segment === 'news' && (
-        <NewsTab
-          symbol={symbol}
-          news={Array.isArray(news) ? news : (news as { data?: unknown[] })?.data ?? null}
-          loading={loadingNews}
-        />
+        loadingNews ? (
+          <View style={styles.skeletonSection}>
+            <SkeletonLoader width="100%" height={120} style={styles.skeletonBlock} />
+            <SkeletonLoader width="90%" height={80} style={styles.skeletonBlock} />
+            <SkeletonLoader width="95%" height={80} style={styles.skeletonBlock} />
+          </View>
+        ) : (
+          <NewsTab
+            symbol={symbol}
+            news={Array.isArray(news) ? news : (news as { data?: unknown[] })?.data ?? null}
+            loading={false}
+          />
+        )
       )}
       {segment === 'financials' && (
-        <FinancialsTab
-          symbol={symbol}
-          financials={financials as FinancialsTabProps['financials']}
-          loading={loadingFinancials}
-        />
+        loadingFinancials ? (
+          <View style={styles.skeletonSection}>
+            <SkeletonLoader width="100%" height={100} style={styles.skeletonBlock} />
+            <SkeletonLoader width="100%" height={200} style={styles.skeletonBlock} />
+          </View>
+        ) : (
+          <FinancialsTab
+            symbol={symbol}
+            financials={financials as FinancialsTabProps['financials']}
+            loading={false}
+          />
+        )
       )}
       {segment === 'forecast' && (
-        <ForecastTechnicalsTab
-          symbol={symbol}
-          sentiment={sentiment as ForecastTechnicalsTabProps['sentiment']}
-          technicals={technicals as ForecastTechnicalsTabProps['technicals']}
-          loading={loadingTechnicals}
-        />
+        loadingTechnicals ? (
+          <View style={styles.skeletonSection}>
+            <SkeletonLoader width="100%" height={140} style={styles.skeletonBlock} />
+            <SkeletonLoader width="90%" height={100} style={styles.skeletonBlock} />
+          </View>
+        ) : (
+          <ForecastTechnicalsTab
+            symbol={symbol}
+            sentiment={sentiment as ForecastTechnicalsTabProps['sentiment']}
+            technicals={technicals as ForecastTechnicalsTabProps['technicals']}
+            loading={false}
+          />
+        )
       )}
       {segment === 'insiders' && (
-        <InsidersCommunityTab
-          symbol={symbol}
-          insiders={insiders as InsidersCommunityTabProps['insiders']}
-          loading={loadingInsiders}
-        />
+        loadingInsiders ? (
+          <View style={styles.skeletonSection}>
+            <SkeletonLoader width="100%" height={100} style={styles.skeletonBlock} />
+            <SkeletonLoader width="100%" height={120} style={styles.skeletonBlock} />
+          </View>
+        ) : (
+          <InsidersCommunityTab
+            symbol={symbol}
+            insiders={insiders as InsidersCommunityTabProps['insiders']}
+            loading={false}
+          />
+        )
       )}
 
       <TradeButton
@@ -207,32 +245,34 @@ export function StockDashboard({ symbol }: StockDashboardProps) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  skeletonSection: { padding: 20, gap: 12 },
+  skeletonBlock: { borderRadius: 8, marginBottom: 12 },
   headerWrapper: { position: 'relative', overflow: 'hidden' },
   headerContent: { zIndex: 1 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingTop: 8,
   },
-  headerTextWrap: { marginLeft: 12, flex: 1 },
-  companyName: { fontSize: 22, fontWeight: '700', letterSpacing: -0.5 },
-  ticker: { fontSize: 13, marginTop: 2 },
+  headerTextWrap: { marginLeft: 10, flex: 1 },
+  companyName: { fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
+  ticker: { fontSize: 12, marginTop: 1 },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginTop: 14,
+    gap: 10,
+    marginTop: 10,
     paddingHorizontal: 20,
-    paddingBottom: 8,
+    paddingBottom: 6,
     borderBottomWidth: 1,
   },
   statusWrap: {
     paddingHorizontal: 20,
-    paddingTop: 6,
-    paddingBottom: 12,
+    paddingTop: 4,
+    paddingBottom: 8,
   },
-  price: { fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  price: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
   pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
   pillText: { fontSize: 15, fontWeight: '600' },
   positive: { color: '#22c55e' },

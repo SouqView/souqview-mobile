@@ -8,7 +8,7 @@ import {
   getOverviewInsight,
 } from '../services/api';
 import type { CommunityPost, OverviewInsight } from '../services/api';
-import { getStockDetails as getStockDetailsFromMarketData } from '../src/services/marketData';
+import { useStockData } from '../src/hooks/useStockData';
 import type { StockProfile } from '../src/services/marketData';
 
 type Detail = {
@@ -17,7 +17,7 @@ type Detail = {
   statistics?: { currentPrice?: number; percent_change?: number; [k: string]: unknown };
   [k: string]: unknown;
 } | null;
-type Historical = Awaited<ReturnType<typeof getStockDetailsFromMarketData>>['historical'];
+type Historical = import('../src/hooks/useStockData').StockHistorical;
 type News = unknown;
 type Financials = Awaited<ReturnType<typeof getFinancialsData>> | null;
 type Technicals = Awaited<ReturnType<typeof getTechnicalsData>> | null;
@@ -39,9 +39,19 @@ interface StockDetailState {
   loadingTechnicals: boolean;
   loadingInsiders: boolean;
   loadingOverviewInsight: boolean;
-  /** Optimistic UI: from Watchlist route params, shown while detail loads. */
+  /** Symbol stable 600ms — use to gate AI (Faheem) calls so fast symbol switches cancel. */
+  symbolForAi: string | null;
+  /** Warm handoff from Watchlist – optimistic UI, zero loading for price. */
+  initialName?: string;
   initialPrice?: string;
   initialChange?: string;
+  initialLastClose?: string;
+  /** True when chart API failed but quote/profile (Key Statistics) are available. */
+  chartUnavailable: boolean;
+  /** Set when backend returned 429; show "Live updates paused" without clearing price. */
+  rateLimitError: 'RATE_LIMIT' | null;
+  /** True for first 5s when initialPrice present – suppress error view to avoid flicker. */
+  suppressErrorView: boolean;
 }
 
 interface StockDetailContextValue extends StockDetailState {
@@ -58,69 +68,52 @@ const StockDetailContext = createContext<StockDetailContextValue | null>(null);
 export function StockDetailProvider({
   symbol,
   children,
+  initialName,
   initialPrice,
   initialChange,
+  initialLastClose,
 }: {
   symbol: string;
   children: React.ReactNode;
+  initialName?: string;
   initialPrice?: string;
   initialChange?: string;
+  initialLastClose?: string;
 }) {
-  const [detail, setDetail] = useState<Detail>(null);
-  const [historical, setHistorical] = useState<Historical>(null);
+  const { detail, historical, loadingDetail, error: detailError, reload: loadDetail, symbolForAi, chartUnavailable } = useStockData(symbol);
+  const [suppressErrorView, setSuppressErrorView] = useState(Boolean(initialPrice));
+  useEffect(() => {
+    if (!initialPrice) return;
+    const t = setTimeout(() => setSuppressErrorView(false), 5000);
+    return () => clearTimeout(t);
+  }, [initialPrice]);
   const [news, setNews] = useState<News>(null);
   const [financials, setFinancials] = useState<Financials>(null);
   const [technicals, setTechnicals] = useState<Technicals>(null);
   const [insiders, setInsiders] = useState<Insiders>(null);
   const [overviewInsight, setOverviewInsight] = useState<OverviewInsight | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(true);
   const [loadingNews, setLoadingNews] = useState(false);
   const [loadingFinancials, setLoadingFinancials] = useState(false);
   const [loadingTechnicals, setLoadingTechnicals] = useState(false);
   const [loadingInsiders, setLoadingInsiders] = useState(false);
   const [loadingOverviewInsight, setLoadingOverviewInsight] = useState(false);
 
-  const loadDetail = useCallback(async () => {
-    setLoadingDetail(true);
+  const loadOverviewInsight = useCallback(async () => {
+    setLoadingOverviewInsight(true);
     try {
-      const result = await getStockDetailsFromMarketData(symbol);
-      if ('error' in result && result.error === 'RATE_LIMIT') {
-        setDetail({ error: 'RATE_LIMIT', symbol } as Detail);
-        setHistorical(null);
-        return;
-      }
-      const { quote, profile, historical: hist } = result;
-      const q = quote && typeof quote === 'object' ? quote as Record<string, unknown> : null;
-      const p = profile && typeof profile === 'object' ? profile as Record<string, unknown> : null;
-      const detailToSet: Detail = {
-        quote: q ?? undefined,
-        profile: p ?? undefined,
-        statistics: {
-          currentPrice: (q?.close ?? q?.price ?? q?.current_price) as number | undefined,
-          percent_change: (q?.percent_change ?? q?.change_pct ?? q?.changesPercentage) as number | undefined,
-          market_cap: (q?.market_cap ?? q?.marketCap ?? p?.market_cap ?? p?.mktCap) as string | number | undefined,
-          marketCap: (q?.marketCap ?? q?.market_cap ?? p?.market_cap ?? p?.mktCap) as string | number | undefined,
-          pe: (q?.pe ?? q?.pe_ratio ?? p?.pe ?? p?.pe_ratio) as string | number | undefined,
-          peRatio: (q?.peRatio ?? q?.pe ?? q?.pe_ratio ?? p?.pe ?? p?.pe_ratio) as number | string | undefined,
-          volume: (q?.volume ?? q?.average_volume ?? p?.volume) as number | undefined,
-          fiftyTwoWeekHigh: (q?.fifty_two_week_high ?? q?.yearHigh ?? p?.fifty_two_week_high) as number | undefined,
-          fiftyTwoWeekLow: (q?.fifty_two_week_low ?? q?.yearLow ?? p?.fifty_two_week_low) as number | undefined,
-          dividendYield: (p?.dividendYield ?? q?.dividendYield ?? q?.dividend_yield) as number | undefined,
-        },
-      };
-      setDetail(detailToSet);
-      setHistorical(hist ?? null);
+      const insight = await getOverviewInsight(symbol);
+      setOverviewInsight(insight);
     } catch {
-      setDetail(null);
-      setHistorical(null);
+      setOverviewInsight(null);
     } finally {
-      setLoadingDetail(false);
+      setLoadingOverviewInsight(false);
     }
   }, [symbol]);
 
   useEffect(() => {
-    loadDetail();
-  }, [loadDetail]);
+    if (!symbolForAi || symbolForAi !== symbol) return;
+    loadOverviewInsight();
+  }, [symbolForAi, symbol, loadOverviewInsight]);
 
   const loadNews = useCallback(async () => {
     setLoadingNews(true);
@@ -175,18 +168,6 @@ export function StockDetailProvider({
     }
   }, [symbol]);
 
-  const loadOverviewInsight = useCallback(async () => {
-    setLoadingOverviewInsight(true);
-    try {
-      const insight = await getOverviewInsight(symbol);
-      setOverviewInsight(insight);
-    } catch {
-      setOverviewInsight(null);
-    } finally {
-      setLoadingOverviewInsight(false);
-    }
-  }, [symbol]);
-
   const community = getCommunityMock(symbol);
 
   const value: StockDetailContextValue = {
@@ -205,8 +186,14 @@ export function StockDetailProvider({
     loadingTechnicals,
     loadingInsiders,
     loadingOverviewInsight,
+    symbolForAi,
+    initialName,
     initialPrice,
     initialChange,
+    initialLastClose,
+    chartUnavailable,
+    rateLimitError: detailError,
+    suppressErrorView,
     loadDetail,
     loadNews,
     loadFinancials,

@@ -9,6 +9,9 @@ const BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   'http://localhost:5000/api';
 
+/** On web, omit credentials so CORS doesn't require Allow-Credentials + exact origin. */
+const isWeb = typeof window !== 'undefined';
+
 /** Build full URL for a path (no query yet) – for logging only, never log query params with secrets. */
 export function getSanitizedUrl(path: string, params?: Record<string, string | number | undefined>): string {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
@@ -30,7 +33,7 @@ const client = axios.create({
   baseURL: BASE_URL,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: true,
+  withCredentials: !isWeb,
 });
 
 client.interceptors.request.use((config) => {

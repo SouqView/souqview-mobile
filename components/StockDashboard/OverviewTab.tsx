@@ -18,6 +18,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { COLORS, TYPO } from '../../constants/theme';
 import { TypewriterText, SkeletonLoader, SentimentBar } from '../../src/components';
 import { getFaheemOverview } from '../../src/services/aiService';
+import { FaheemRationaleErrorBoundary } from '../FaheemRationaleErrorBoundary';
 import { calculateSmartSentiment } from '../../src/utils/sentimentEngine';
 import type { FaheemMode } from '../../src/services/aiService';
 import { getHistoricalData } from '../../services/api';
@@ -69,20 +70,30 @@ export interface OverviewTabProps {
   faheemMode?: FaheemMode;
   /** When user pulls to refresh, re-fetch Profile/Quote (Overview data). */
   onRefresh?: () => void;
+  /** Symbol stable 600ms — only fetch Faheem when this matches symbol (debounced AI). */
+  symbolForAi?: string | null;
+  /** When true, chart API failed but Key Statistics are available; show skeleton instead of "Chart Unavailable" text. */
+  chartUnavailable?: boolean;
+  /** When true, backend returned 429; show content but header shows "Live updates paused" (do not full-screen error). */
+  rateLimitError?: boolean;
+  /** When true (e.g. first 5s with warm handoff), do not show error view – show watchlist data / loading. */
+  suppressErrorView?: boolean;
 }
 
 const CHART_HEIGHT = 300;
 const PADDING = 20;
 
-/** Sanitizes API data and renders an SVG line or candle chart. */
+/** Sanitizes API data and renders an SVG line or candle chart. Shows skeleton when chartUnavailable and no data. */
 function StockLineChart({
   data,
   isPositive,
   type = 'line',
+  chartUnavailable = false,
 }: {
   data: Array<Record<string, unknown>>;
   isPositive: boolean;
   type?: 'line' | 'candle';
+  chartUnavailable?: boolean;
 }) {
   const { colors } = useTheme();
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
@@ -113,9 +124,29 @@ function StockLineChart({
   }, [data]);
 
   if (!chartData || chartData.length === 0) {
+    if (chartUnavailable) {
+      return (
+        <View style={{ height: CHART_HEIGHT, justifyContent: 'center', alignItems: 'center', paddingHorizontal: PADDING }}>
+          <SkeletonLoader width={Dimensions.get('window').width - PADDING * 2 - 24} height={CHART_HEIGHT} borderRadius={12} style={{ backgroundColor: colors.separator }} />
+        </View>
+      );
+    }
+    const webOrigin = typeof window !== 'undefined' ? window.location.origin : '';
     return (
-      <View style={{ height: CHART_HEIGHT, justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: colors.textSecondary }}>Chart Unavailable</Text>
+      <View style={{ height: CHART_HEIGHT, justifyContent: 'center', alignItems: 'center', paddingHorizontal: PADDING }}>
+        <Text style={{ color: colors.textSecondary, textAlign: 'center' }}>Chart Unavailable</Text>
+        {Platform.OS === 'web' && (
+          <>
+            <Text style={{ color: colors.textTertiary, fontSize: 12, textAlign: 'center', marginTop: 8, maxWidth: 320 }}>
+              Ensure the backend is running and allows CORS. If using an origin allowlist, add:
+            </Text>
+            {webOrigin ? (
+              <Text style={{ color: colors.electricBlue, fontSize: 12, textAlign: 'center', marginTop: 4, fontFamily: 'monospace' }} selectable>
+                {webOrigin}
+              </Text>
+            ) : null}
+          </>
+        )}
       </View>
     );
   }
@@ -312,7 +343,7 @@ function getStatistics(detail: OverviewTabProps['detail']): StatsShape | undefin
   return (d.statistics ?? (d.data as Record<string, unknown>)?.statistics) as StatsShape | undefined;
 }
 
-export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 'beginner', onRefresh }: OverviewTabProps) {
+export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 'beginner', onRefresh, symbolForAi: symbolForAiProp, chartUnavailable: chartUnavailableProp = false, rateLimitError = false, suppressErrorView = false }: OverviewTabProps) {
   const { colors } = useTheme();
   const profile = getProfile(detail);
   const quote = getQuote(detail);
@@ -355,6 +386,7 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
   const [faheemVerdict, setFaheemVerdict] = useState<string | null>(null);
   const [faheemLoading, setFaheemLoading] = useState(false);
   const [faheemError, setFaheemError] = useState(false);
+  const [faheemRetryKey, setFaheemRetryKey] = useState(0);
   const { width } = Dimensions.get('window');
   const companyName = (typeof profile?.name === 'string' ? profile.name : (profile?.name as unknown as { en?: string })?.en) ?? symbol;
   const description: string = (typeof profile?.description === 'string' ? profile.description : (profile?.description as unknown as { en?: string })?.en)
@@ -367,8 +399,10 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
   // Chart data for current timeframe (used for Faheem and display)
   const chartData = data ?? [];
 
-  // Faheem Overview: POST /api/faheem/overview → response.data.analysis. Each section independent; show when this request completes.
+  // Faheem Overview: only when symbolForAi is set (1500ms delay in useStockData) so fast symbol switches cancel.
   useEffect(() => {
+    if (symbolForAiProp != null && symbolForAiProp !== symbol) return;
+
     let isMounted = true;
     let activeRequest = false;
 
@@ -408,12 +442,13 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
       }
     };
 
-    const timer = setTimeout(fetchStrictAi, 1500);
+    const delay = symbolForAiProp === symbol ? 0 : 1500;
+    const timer = setTimeout(fetchStrictAi, delay);
     return () => {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [symbol, timeframe, chartData, faheemMode]);
+  }, [symbol, timeframe, chartData, faheemMode, symbolForAiProp, faheemRetryKey]);
 
   const timeframeToInterval = (tf: string) => {
     switch (tf) {
@@ -466,9 +501,17 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
     changePercent: change,
   }), [lastCandle, high, low, price, change]);
   const faheemForSentiment = faheemLoading ? null : (faheemRationale ?? aiAnalysis ?? null);
+  const closesForSentiment = useMemo(
+    () => (data ?? []).map((c) => c.close).filter((c): c is number => Number.isFinite(c)),
+    [data]
+  );
   const sentiment = useMemo(
-    () => calculateSmartSentiment(quoteForSentiment, null, faheemForSentiment, symbol),
-    [quoteForSentiment, faheemForSentiment, symbol]
+    () =>
+      calculateSmartSentiment(quoteForSentiment, null, faheemForSentiment, {
+        symbol,
+        closes: closesForSentiment,
+      }),
+    [quoteForSentiment, faheemForSentiment, symbol, closesForSentiment]
   );
   const [cachedSentimentScore, setCachedSentimentScore] = useState(50);
   const prevSymbolRef = useRef(symbol);
@@ -497,7 +540,7 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
     );
   }
 
-  if ((detail as { error?: string } | null)?.error === 'RATE_LIMIT') {
+  if (!suppressErrorView && !rateLimitError && (detail as { error?: string } | null)?.error === 'RATE_LIMIT') {
     return (
       <View style={themedStyles.container}>
         <View style={themedStyles.errorContainer}>
@@ -565,43 +608,46 @@ export function OverviewTab({ symbol, detail, historical, loading, faheemMode = 
             data={data as Array<Record<string, unknown>>}
             isPositive={isPositive}
             type={chartType}
+            chartUnavailable={chartUnavailableProp}
           />
         </View>
       )}
 
       <SentimentBar score={cachedSentimentScore} />
 
-      <View style={themedStyles.faheemCard}>
-        <Ionicons name="sparkles" size={20} color={colors.electricBlue} style={themedStyles.faheemIcon} />
-        <View style={themedStyles.faheemTitleRow}>
-          <Text style={themedStyles.faheemTitle}>Faheem&apos;s Rationale</Text>
-          {faheemVerdict ? (
-            <View style={[themedStyles.verdictBadge, /^bullish/i.test(faheemVerdict) ? themedStyles.verdictBullish : themedStyles.verdictBearish]}>
-              <Text style={themedStyles.verdictText}>{faheemVerdict}</Text>
+      <FaheemRationaleErrorBoundary onRetry={() => { setFaheemError(false); setFaheemRationale(null); setFaheemRetryKey((k) => k + 1); }}>
+        <View style={themedStyles.faheemCard}>
+          <Ionicons name="sparkles" size={20} color={colors.electricBlue} style={themedStyles.faheemIcon} />
+          <View style={themedStyles.faheemTitleRow}>
+            <Text style={themedStyles.faheemTitle}>Faheem&apos;s Rationale</Text>
+            {faheemVerdict ? (
+              <View style={[themedStyles.verdictBadge, /^bullish/i.test(faheemVerdict) ? themedStyles.verdictBullish : themedStyles.verdictBearish]}>
+                <Text style={themedStyles.verdictText}>{faheemVerdict}</Text>
+              </View>
+            ) : null}
+          </View>
+          {faheemLoading ? (
+            <View style={themedStyles.faheemSkeleton}>
+              <SkeletonLoader width="100%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 8 }} />
+              <SkeletonLoader width="85%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 8 }} />
+              <SkeletonLoader width="70%" height={14} style={{ backgroundColor: colors.separator }} />
+              <Text style={themedStyles.faheemSkeletonText}>Analyzing chart data...</Text>
             </View>
-          ) : null}
+          ) : faheemError ? (
+            <Text style={themedStyles.faheemSummary}>
+              Reconnecting…
+            </Text>
+          ) : (
+            <View style={themedStyles.faheemContent}>
+              <TypewriterText
+                text={faheemRationale ?? aiAnalysis ?? 'Analyzing chart data...'}
+                style={themedStyles.faheemSummary}
+                haptics={false}
+              />
+            </View>
+          )}
         </View>
-        {faheemLoading ? (
-          <View style={themedStyles.faheemSkeleton}>
-            <SkeletonLoader width="100%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 8 }} />
-            <SkeletonLoader width="85%" height={14} style={{ backgroundColor: colors.separator, marginBottom: 8 }} />
-            <SkeletonLoader width="70%" height={14} style={{ backgroundColor: colors.separator }} />
-            <Text style={themedStyles.faheemSkeletonText}>Analyzing chart data...</Text>
-          </View>
-        ) : faheemError ? (
-          <Text style={themedStyles.faheemSummary}>
-            Faheem is temporarily unavailable. Check that the backend is running and /api/faheem/overview is enabled.
-          </Text>
-        ) : (
-          <View style={themedStyles.faheemContent}>
-            <TypewriterText
-              text={faheemRationale ?? aiAnalysis ?? 'Analyzing chart data...'}
-              style={themedStyles.faheemSummary}
-              haptics={false}
-            />
-          </View>
-        )}
-      </View>
+      </FaheemRationaleErrorBoundary>
 
       <Text style={themedStyles.sectionHeader}>Key Statistics</Text>
       <View style={themedStyles.statsGrid}>
@@ -691,7 +737,7 @@ function makeStyles(colors: typeof COLORS) {
     },
     errorTitle: { fontSize: 18, fontWeight: '600', color: colors.text, marginBottom: 8 },
     errorText: { fontSize: 15, color: colors.textSecondary, textAlign: 'center' },
-    content: { padding: PADDING, paddingBottom: 120 },
+    content: { padding: PADDING, paddingBottom: 100 },
     chartSection: { marginBottom: 4 },
     chartControlsRow: {
       flexDirection: 'row',

@@ -7,6 +7,7 @@ import { AuthProvider } from '../src/context/AuthContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { ExpertiseProvider } from '../contexts/ExpertiseContext';
 import { PortfolioProvider } from '../contexts/PortfolioContext';
+import { StockPriceProvider } from '../src/store/StockPriceStore';
 import { AuthGate } from '../components/AuthGate';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { handleOAuthRedirect } from '../src/services/supabase';
@@ -65,9 +66,11 @@ export default function RootLayout() {
         <ThemeProvider>
         <ExpertiseProvider>
         <PortfolioProvider>
-          <AuthGate>
-            <StackWithTheme />
-          </AuthGate>
+          <StockPriceProvider>
+            <AuthGate>
+              <StackWithTheme />
+            </AuthGate>
+          </StockPriceProvider>
         </PortfolioProvider>
         </ExpertiseProvider>
         </ThemeProvider>

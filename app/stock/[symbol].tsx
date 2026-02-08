@@ -5,10 +5,12 @@ import { useTheme } from '../../contexts/ThemeContext';
 
 export default function StockScreen() {
   const { colors } = useTheme();
-  const { symbol, initialPrice, initialChange } = useLocalSearchParams<{
+  const { symbol, name, initialPrice, initialChange, lastClose } = useLocalSearchParams<{
     symbol: string;
+    name?: string;
     initialPrice?: string;
     initialChange?: string;
+    lastClose?: string;
   }>();
   const ticker = symbol ?? '';
 
@@ -16,8 +18,10 @@ export default function StockScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StockDetailView
         symbol={ticker}
+        initialName={name}
         initialPrice={initialPrice}
         initialChange={initialChange}
+        initialLastClose={lastClose}
       />
     </View>
   );

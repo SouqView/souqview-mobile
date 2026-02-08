@@ -334,7 +334,7 @@ export function InsidersTab({ symbol, insiders, loading }: InsidersTabProps) {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1 },
-  list: { padding: 16, paddingBottom: 120 },
+  list: { padding: 16, paddingBottom: 100 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   sub: { color: COLORS.textSecondary, marginTop: 12, fontSize: 15 },
   empty: { color: COLORS.textSecondary, textAlign: 'center', fontSize: 15 },
@@ -360,9 +360,9 @@ const styles = StyleSheet.create({
 
   table: {
     backgroundColor: COLORS.card,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: COLORS.separator,
     overflow: 'hidden',
   },
   tableHeader: {

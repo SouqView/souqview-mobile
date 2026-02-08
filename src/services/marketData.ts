@@ -171,26 +171,36 @@ function normalizeMarketProfile(p: StockProfile | Record<string, unknown> | null
   return { ...(p as StockProfile), description: desc || (p as StockProfile).description, executives };
 }
 
+export type GetStockDetailsOptions = { signal?: AbortSignal };
+
+export type GetStockDetailsResult =
+  | {
+      quote: StockQuote | null;
+      profile: StockProfile | null;
+      historical: { data?: HistoricalCandle[] } | null;
+      chartUnavailable?: boolean;
+    }
+  | { error: 'RATE_LIMIT'; symbol: string };
+
 /**
  * Full stock context for Detail/Overview: quote, profile, historical (1day).
- * Force-maps every field (multiple key names) so About, Executives, and Stats always show.
- * Logs raw API responses in __DEV__ for debugging.
- * On 429 rate limit returns { error: 'RATE_LIMIT', symbol } so UI can show "System Busy".
+ * Uses DataFetcher (sanitized ticker, 429 retry, parallel fetch). If chart API fails,
+ * quote/profile still returned so Key Statistics render; chartUnavailable set for skeleton UI.
+ * On 429 rate limit returns { error: 'RATE_LIMIT', symbol }.
  */
-export async function getStockDetails(symbol: string): Promise<
-  | { quote: StockQuote | null; profile: StockProfile | null; historical: { data?: HistoricalCandle[] } | null }
-  | { error: 'RATE_LIMIT'; symbol: string }
-> {
+export async function getStockDetails(
+  symbol: string,
+  options?: GetStockDetailsOptions
+): Promise<GetStockDetailsResult> {
+  const { signal } = options ?? {};
+  const { fetchStockDetail } = await import('./dataFetcher');
   try {
-    console.log(`[marketData] Fetching details for ${symbol}...`);
+    const { detailRes, profileRes, historical: histRes, chartUnavailable } = await fetchStockDetail(symbol, { signal });
 
-    const [detailRes, profileRes, histRes] = await Promise.all([
-      get<unknown>('/stock/stock-detail', { symbol }),
-      get<unknown>('/stock/profile', { symbol }).catch(() => null),
-      get<{ data?: HistoricalCandle[] }>('/stock/historical', { symbol, interval: '1day' }),
-    ]);
+    if (detailRes == null && profileRes == null) {
+      return { quote: null, profile: null, historical: histRes ?? null, chartUnavailable };
+    }
 
-    // Check for API Rate Limit
     const codeDetail = (detailRes as { code?: number; data?: { code?: number } })?.code ?? (detailRes as { data?: { code?: number } })?.data?.code;
     const codeProfile = (profileRes as { code?: number; data?: { code?: number } })?.code ?? (profileRes as { data?: { code?: number } })?.data?.code;
     if (codeDetail === 429 || codeProfile === 429) {
@@ -198,11 +208,11 @@ export async function getStockDetails(symbol: string): Promise<
       return { error: 'RATE_LIMIT', symbol };
     }
 
-    // 🛑 DEBUG LOG – exactly what the backend sends
-    console.log('[marketData] RAW STOCK-DETAIL RESPONSE:', JSON.stringify(detailRes, null, 2));
-    console.log('[marketData] RAW PROFILE RESPONSE:', JSON.stringify(profileRes, null, 2));
+    if (__DEV__) {
+      console.log('[marketData] RAW STOCK-DETAIL RESPONSE:', JSON.stringify(detailRes, null, 2));
+      console.log('[marketData] RAW PROFILE RESPONSE:', JSON.stringify(profileRes, null, 2));
+    }
 
-    // Handle array vs object and hybrid backend shape (profile.profile, profile.stats, quote.data)
     const detailPayload =
       detailRes != null && typeof detailRes === 'object' && 'data' in (detailRes as object)
         ? (detailRes as { data?: unknown }).data
@@ -216,7 +226,6 @@ export async function getStockDetails(symbol: string): Promise<
         : profileRes;
     const profileResData = (profileResPayload && typeof profileResPayload === 'object' ? profileResPayload : {}) as Record<string, unknown>;
 
-    // Hybrid backend: quote may be in data.quote or data; profile/stats may be in data.profile.profile, data.profile.stats, or data
     const quoteData = (data?.quote ?? data) as Record<string, unknown>;
     const quoteDataNormalized = (Array.isArray(quoteData) ? quoteData[0] : quoteData) as Record<string, unknown> | undefined;
     const rawQuote = quoteDataNormalized ?? (data as Record<string, unknown>);
@@ -230,14 +239,9 @@ export async function getStockDetails(symbol: string): Promise<
       stats: innerStats ?? {},
     } as { profile: Record<string, unknown>; stats: Record<string, unknown> };
 
-    // 🔍 DEBUG: Log the exact structure we are trying to map (Yahoo / hybrid backend)
-    console.log('👉 MAPPING DEBUG - Profile:', JSON.stringify(profileData.profile, null, 2));
-    console.log('👉 MAPPING DEBUG - Stats:', JSON.stringify(profileData.stats, null, 2));
-
     const pp = profileData.profile;
     const st = profileData.stats;
 
-    // 1. Map Description (Yahoo / profile.profile first)
     const description =
       (typeof pp?.description === 'string' && pp.description)
         ? pp.description
@@ -247,13 +251,11 @@ export async function getStockDetails(symbol: string): Promise<
             ? pp.summary
             : 'No description available.';
 
-    // 2. Map Sector / Industry / Employees (Yahoo first)
     const sector =
       (typeof pp?.sector === 'string' ? pp.sector : (pp?.sector as { en?: string })?.en) ?? 'N/A';
     const industry =
       (typeof pp?.industry === 'string' ? pp.industry : (pp?.industry as { en?: string })?.en) ?? 'N/A';
 
-    // 3. Map Executives (backend sends in profile.executives)
     const execRaw = pp?.executives ?? pp?.officers ?? pp?.key_executives ?? pp?.management;
     const executives = Array.isArray(execRaw)
       ? execRaw.map((e: { name?: string; title?: string }) => ({ name: e?.name ?? '—', title: e?.title ?? '—' }))
@@ -261,7 +263,6 @@ export async function getStockDetails(symbol: string): Promise<
         ? Object.values(execRaw).map((e: { name?: string; title?: string }) => ({ name: e?.name ?? '—', title: e?.title ?? '—' }))
         : [];
 
-    // 4. Map Stats (backend sends in profile.stats – Yahoo-style: marketCap, peRatio, high52, low52, dividendYield)
     const marketCap =
       st?.marketCap ?? st?.market_cap ?? st?.mktCap ?? rawQuote?.marketCap ?? rawQuote?.market_cap ?? rawQuote?.mktCap ?? pp?.market_cap ?? pp?.mktCap;
     const volume = (rawQuote?.volume ?? rawQuote?.average_volume ?? st?.volume) as number | undefined;
@@ -301,22 +302,7 @@ export async function getStockDetails(symbol: string): Promise<
       fifty_two_week_low: low52,
     };
 
-    const historical = histRes ?? null;
-
-    console.log('[marketData] MAPPED OUTPUT:', {
-      description: profile.description?.slice(0, 60) + (profile.description && profile.description.length > 60 ? '…' : ''),
-      sector: profile.sector,
-      industry: profile.industry,
-      executivesCount: profile.executives?.length ?? 0,
-      price: quote.price ?? quote.close,
-      changePercent: quote.percent_change,
-      marketCap: profile.market_cap,
-      peRatio: profile.pe,
-      high52: profile.fifty_two_week_high,
-      low52: profile.fifty_two_week_low,
-    });
-
-    return { quote, profile, historical };
+    return { quote, profile, historical: histRes ?? null, chartUnavailable };
   } catch (error) {
     const status = (error as { response?: { status?: number } })?.response?.status;
     if (status === 429) {
@@ -324,7 +310,7 @@ export async function getStockDetails(symbol: string): Promise<
       return { error: 'RATE_LIMIT', symbol };
     }
     console.error('[marketData] DETAILS ERROR:', error);
-    return { quote: null, profile: null, historical: null };
+    return { quote: null, profile: null, historical: null, chartUnavailable: true };
   }
 }
 

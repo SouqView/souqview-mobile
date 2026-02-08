@@ -616,7 +616,7 @@ export function FinancialsTab({ symbol, financials, loading }: FinancialsTabProp
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 120 },
+  content: { padding: 16, paddingBottom: 100 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   sub: { color: COLORS.textSecondary, marginTop: 12 },
   empty: { color: COLORS.textSecondary, textAlign: 'center' },
@@ -671,7 +671,7 @@ const styles = StyleSheet.create({
   },
   accordionTitle: { fontSize: 16, fontWeight: '600', color: COLORS.text },
   accordionBody: { paddingTop: 4, paddingBottom: 12 },
-  table: { backgroundColor: COLORS.card, borderRadius: 10, marginLeft: 4, marginRight: 4, borderWidth: 1, borderColor: COLORS.separator },
+  table: { backgroundColor: COLORS.card, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.separator },
   dataRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16 },
   dataRowBorder: { borderTopWidth: 1, borderTopColor: COLORS.separator },
   dataRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },

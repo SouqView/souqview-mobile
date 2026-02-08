@@ -304,7 +304,7 @@ export function ForecastAITab({ symbol, historical, currentPrice }: ForecastAITa
 function makeStyles(colors: ThemeColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    content: { padding: PADDING, paddingBottom: 120 },
+    content: { padding: PADDING, paddingBottom: 100 },
     timeframeRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
     timeframePill: {
       paddingVertical: 8,

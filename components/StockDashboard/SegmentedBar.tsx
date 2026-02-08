@@ -85,6 +85,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 8,
     flexShrink: 0,
+    flexGrow: 0,
   },
   segmentLabel: {
     fontSize: 15,

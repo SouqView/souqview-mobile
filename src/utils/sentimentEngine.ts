@@ -1,6 +1,10 @@
 /**
- * Smart Sentiment Engine – combines price structure (MFM), RSI, and AI keyword analysis
- * into a single 0–100 score with Bullish / Neutral / Bearish label and color.
+ * Sentiment Engine – avoids visual contradictions (e.g. green price, red sentiment).
+ * - Base: 50 + (Price Change % × 10). +3.5% day = +35 points.
+ * - Trend filter (EMA20): Price > EMA20 → bearish capped at 40% unless RSI > 85.
+ *   Price < EMA20 → bullish capped at 40% unless RSI < 15.
+ * - MFM: secondary weight only (15% impact, ±15 points).
+ * - Price-First override (sanity check): |dailyChangePercent| > 2% forces bar to match price (≥70% bull or ≥70% bear).
  */
 
 export type QuoteData = {
@@ -16,94 +20,124 @@ export type SentimentResult = {
   color: string;
 };
 
+export type SentimentOptions = {
+  symbol?: string;
+  /** Close prices, oldest first (for EMA20 trend filter). */
+  closes?: number[];
+};
+
 const BULLISH_COLOR = '#34C759';
 const BEARISH_COLOR = '#FF3B30';
 const NEUTRAL_COLOR = '#8E8E93';
 
-/** Map value in [min, max] to [0, 100] */
-function clampMap(value: number, min: number, max: number): number {
-  if (max === min) return 50;
-  const t = (value - min) / (max - min);
-  return Math.max(0, Math.min(100, t * 100));
+const MFM_IMPACT = 15; // 15% impact: shift in [-15, +15]
+const PRICE_WEIGHT = 10; // changePercent * PRICE_WEIGHT = price-weight points
+const PRICE_FIRST_THRESHOLD = 2.0; // |change%| > this forces min 70% bull or 70% bear
+
+/** EMA(period). Alpha = 2/(N+1). */
+function ema(closes: number[], period: number): number[] {
+  if (!closes?.length || period < 1) return [];
+  const alpha = 2 / (period + 1);
+  const out: number[] = [];
+  let prev = closes[0];
+  for (let i = 0; i < closes.length; i++) {
+    prev = i === 0 ? closes[0] : alpha * closes[i] + (1 - alpha) * prev;
+    out.push(prev);
+  }
+  return out;
+}
+
+/** Get last EMA20 value if we have enough data. */
+function getEma20(closes: number[]): number | null {
+  const arr = ema(closes, 20);
+  if (arr.length < 20) return null;
+  const v = arr[arr.length - 1];
+  return Number.isFinite(v) ? v : null;
 }
 
 /**
- * PART A: Money Flow Multiplier (Weight 50%)
- * MFM = ((Close - Low) - (High - Close)) / (High - Low)
- * MFM in [-1, 1] -> 0–100 (50 = neutral).
+ * Money Flow Multiplier: ((Close - Low) - (High - Close)) / (High - Low).
+ * Used as secondary weight only (15% impact).
  */
-function partAPriceStructure(quote: QuoteData): number {
+function getMfmShift(quote: QuoteData): { mfm: number; shift: number } {
   const { high, low, close } = quote;
   const range = high - low;
-  if (!Number.isFinite(range) || range <= 0) return 50;
-
+  if (!Number.isFinite(range) || range <= 0) return { mfm: 0, shift: 0 };
   const mfm = ((close - low) - (high - close)) / range;
-  const score = clampMap(mfm, -1, 1);
-  const bonus = (quote.changePercent ?? 0) > 0 ? 5 : 0;
-  return Math.min(100, score + bonus);
+  const clamped = Math.max(-1, Math.min(1, mfm));
+  return { mfm, shift: clamped * MFM_IMPACT };
 }
 
-/**
- * PART B: RSI (Weight 30%)
- * RSI < 30 -> Bullish (oversold) -> 80
- * RSI > 70 -> Bearish (overbought) -> 20
- * RSI 30–70 -> linear (50 = neutral).
- */
-function partBRSI(rsi: number | null): number {
-  const r = rsi ?? 50;
-  if (!Number.isFinite(r)) return 50;
-  if (r < 30) return 80;
-  if (r > 70) return 20;
-  return clampMap(r, 30, 70);
-}
-
-const POSITIVE_KEYWORDS = ['bullish', 'growth', 'breakout', 'strong', 'upside', 'buy'];
-const NEGATIVE_KEYWORDS = ['bearish', 'weak', 'downside', 'risk', 'sell', 'resistance'];
+type TrendStatus = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+type ResultWinner = 'BULLS WIN' | 'BEARS WIN' | 'NEUTRAL';
 
 /**
- * PART C: Faheem's Brain – keyword analysis (Weight 20%)
- * Shift score by +/- 10 based on keyword hits.
+ * Trend filter (EMA20):
+ * - Price > EMA20 → bearish score hard-capped at 40% (score ≥ 40) unless RSI > 85.
+ * - Price < EMA20 → bullish score hard-capped at 40% (score ≤ 40) unless RSI < 15.
  */
-function partCKeywordShift(aiAnalysis: string | null): number {
-  if (!aiAnalysis || typeof aiAnalysis !== 'string') return 0;
-  const lower = aiAnalysis.toLowerCase();
-  let positive = 0;
-  let negative = 0;
-  for (const k of POSITIVE_KEYWORDS) {
-    if (lower.includes(k)) positive++;
+function applyTrendFilter(
+  score: number,
+  price: number,
+  ema20: number | null,
+  rsi: number | null
+): number {
+  if (ema20 == null || !Number.isFinite(price)) return score;
+
+  if (price > ema20) {
+    const rsiOverride = rsi != null && Number.isFinite(rsi) && rsi > 85;
+    if (!rsiOverride && score < 40) return 40;
+    return score;
   }
-  for (const k of NEGATIVE_KEYWORDS) {
-    if (lower.includes(k)) negative++;
+
+  if (price < ema20) {
+    const rsiOverride = rsi != null && Number.isFinite(rsi) && rsi < 15;
+    if (!rsiOverride && score > 40) return 40;
+    return score;
   }
-  const net = positive - negative;
-  if (net > 0) return Math.min(10, net * 3);
-  if (net < 0) return Math.max(-10, net * 3);
-  return 0;
+
+  return score;
 }
 
-/**
- * Weighted combination:
- * A: 50%, B: 30%, C: 20% (C is a +/- shift on the 0–100 scale).
- * @param symbolOpt Optional symbol for DEBUG SENTIMENT logging (e.g. "AAPL").
- */
 export function calculateSmartSentiment(
   quote: QuoteData,
   rsi: number | null,
   aiAnalysis: string | null,
-  symbolOpt?: string
+  options?: SentimentOptions
 ): SentimentResult {
-  const a = partAPriceStructure(quote);
-  const b = partBRSI(rsi);
-  const cShift = partCKeywordShift(aiAnalysis);
+  const symbol = options?.symbol ?? '';
+  const closes = options?.closes ?? [];
+  const price = quote.close;
+  const changePercent = quote.changePercent ?? 0;
 
-  if (__DEV__ && symbolOpt) {
-    console.log(
-      `DEBUG SENTIMENT: [${symbolOpt}] -> MFM: ${a.toFixed(2)}, RSI: ${rsi ?? 'null'}, AI: ${cShift}`
-    );
+  // Base: 50 + (Price Change % × 10). +3.5% = +35 points.
+  const priceWeight = Number.isFinite(changePercent) ? changePercent * PRICE_WEIGHT : 0;
+  let score = 50 + priceWeight;
+
+  // MFM: secondary weight only (15% impact).
+  const { mfm, shift: mfmShift } = getMfmShift(quote);
+  score += mfmShift;
+
+  score = Math.round(Math.max(0, Math.min(100, score)));
+
+  const ema20 = getEma20(closes);
+  score = applyTrendFilter(score, price, ema20, rsi);
+
+  // Price-First override: strong move must show in bar regardless of RSI/MFM.
+  let overrideActive = false;
+  if (Number.isFinite(changePercent)) {
+    if (changePercent > PRICE_FIRST_THRESHOLD) {
+      if (score < 70) {
+        score = 70;
+        overrideActive = true;
+      }
+    } else if (changePercent < -PRICE_FIRST_THRESHOLD) {
+      if (score > 30) {
+        score = 30;
+        overrideActive = true;
+      }
+    }
   }
-
-  const raw = a * 0.5 + b * 0.3 + (50 * 0.2) + cShift;
-  const score = Math.round(Math.max(0, Math.min(100, raw)));
 
   let label: SentimentResult['label'] = 'Neutral';
   let color = NEUTRAL_COLOR;
@@ -113,6 +147,31 @@ export function calculateSmartSentiment(
   } else if (score < 45) {
     label = 'Bearish';
     color = BEARISH_COLOR;
+  }
+
+  const trendStatus: TrendStatus =
+    ema20 != null
+      ? price > ema20
+        ? 'BULLISH'
+        : price < ema20
+          ? 'BEARISH'
+          : 'NEUTRAL'
+      : 'NEUTRAL';
+
+  const result: ResultWinner =
+    score > 50 ? 'BULLS WIN' : score < 50 ? 'BEARS WIN' : 'NEUTRAL';
+
+  if (__DEV__ && symbol) {
+    if (overrideActive) {
+      console.log(
+        `LOGIC AUDIT: [${symbol}] | OVERRIDE ACTIVE: Price momentum dominant.`
+      );
+    } else {
+      const priceStr = priceWeight >= 0 ? `+${priceWeight}` : `${priceWeight}`;
+      console.log(
+        `LOGIC AUDIT: [${symbol}] | Price-Weight: ${priceStr} | Trend-Status: ${trendStatus} | Result: ${result}`
+      );
+    }
   }
 
   return { score, label, color };
